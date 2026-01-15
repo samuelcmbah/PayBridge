@@ -13,4 +13,9 @@
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\PayBridge.Application\PayBridge.Application.csproj" />
+    <ProjectReference Include="..\PayBridge.Infrastructure\PayBridge.Infrastructure.csproj" />
+  </ItemGroup>
+
 </Project>
