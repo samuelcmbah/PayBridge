@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace PayBridge.Application.IServices
 {
-    internal interface IPaymentService
+    public interface IPaymentService
     {
         Task<PaymentInitResult> InitializePaymentAsync(PaymentRequest request);
 

@@ -1,4 +1,5 @@
 ﻿using PayBridge.Application.DTOs;
+using PayBridge.Domain.Entities;
 using PayBridge.Domain.Enums;
 using System;
 using System.Collections.Generic;
@@ -12,7 +13,7 @@ namespace PayBridge.Application.IServices
     {
         PaymentProvider Provider { get; }
 
-        Task<PaymentInitResult> InitializeAsync(PaymentRequest request);
+        Task<PaymentInitResult> InitializeAsync(Payment request);
 
         Task<PaymentVerificationResult> VerifyAsync(string reference);
     }

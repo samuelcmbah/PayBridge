@@ -6,9 +6,6 @@ using System.Threading.Tasks;
 
 namespace PayBridge.Application.DTOs
 {
-    public class PaymentInitResult
-    {
-        public string Reference { get; set; } = string.Empty;
-        public string AuthorizationUrl { get; set; } = string.Empty;
-    }
+    public record PaymentInitResult(string Reference, string AuthorizationUrl);
+
 }
