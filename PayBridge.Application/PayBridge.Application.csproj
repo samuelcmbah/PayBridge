@@ -6,4 +6,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\PayBridge.Domain\PayBridge.Domain.csproj" />
+  </ItemGroup>
+
 </Project>
