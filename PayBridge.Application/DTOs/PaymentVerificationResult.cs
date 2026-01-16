@@ -7,10 +7,9 @@ using System.Threading.Tasks;
 
 namespace PayBridge.Application.DTOs
 {
-    public class PaymentVerificationResult
-    {
-        public string Reference { get; set; } = string.Empty;
-        public PaymentStatus Status { get; set; }
-        public decimal Amount { get; set; }
-    }
+    public record PaymentVerificationResult
+    (
+        string Reference,
+        decimal Amount
+    );
 }

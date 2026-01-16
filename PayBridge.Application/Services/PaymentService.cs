@@ -1,6 +1,7 @@
 ﻿using PayBridge.Application.DTOs;
 using PayBridge.Application.IServices;
 using PayBridge.Domain.Entities;
+using PayBridge.Domain.Enums;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -12,16 +13,49 @@ namespace PayBridge.Application.Services
     public class PaymentService : IPaymentService
     {
         private readonly IPaymentRepository paymentRepository;
+        private readonly IAppNotificationService appNotificationService;
         private readonly IEnumerable<IPaymentGateway> gateways;
 
-        public PaymentService(IPaymentRepository paymentRepository, IEnumerable<IPaymentGateway> gateways)
+        public PaymentService(IPaymentRepository paymentRepository,
+            IAppNotificationService appNotificationService,
+            IEnumerable<IPaymentGateway> gateways)
         {
             this.paymentRepository = paymentRepository;
+            this.appNotificationService = appNotificationService;
             this.gateways = gateways;
         }
-        public Task HandleWebhookAsync(WebhookPayload payload)
+
+        public async Task HandleWebhookAsync(string provider, string jsonPayload, string signature)
         {
-            throw new NotImplementedException();
+            var gateway = gateways.First(g => g.Provider.ToString().Equals(provider, StringComparison.OrdinalIgnoreCase));
+
+            var requestVerified = await gateway.VerifySignatureAsync(jsonPayload, signature);
+            if (!requestVerified)
+            {
+                throw new Exception("Invalid webhook signature");
+            }
+
+            // Parse the payload to get our reference
+            var verification = await gateway.ParseWebhookAsync(jsonPayload);
+
+            var payment = await paymentRepository.GetByReferenceAsync(verification.Reference);
+            if (payment == null || payment.Status != PaymentStatus.Pending)
+            {
+                return;
+            }
+            //Double check amount(Security: ensure they paid what we asked)
+            if (verification.Amount != payment.Amount)
+            {
+                payment.MarkFailed();
+            }
+            else
+            {
+                payment.MarkSuccessful();
+            }
+
+            await paymentRepository.SaveChangesAsync();
+
+            await appNotificationService.NotifyAppAsync(payment);
         }
 
         public async Task<PaymentInitResult> InitializePaymentAsync(PaymentRequest request)

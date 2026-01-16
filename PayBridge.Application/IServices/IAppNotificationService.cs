@@ -7,10 +7,9 @@ using System.Threading.Tasks;
 
 namespace PayBridge.Application.IServices
 {
-    public interface IPaymentRepository
+    public interface IAppNotificationService
     {
-        Task AddAsync(Payment payment);
-        Task<Payment?> GetByReferenceAsync(string reference);
-        Task SaveChangesAsync();
+        // Notifies the original app that payment is successful
+        Task NotifyAppAsync(Payment payment);
     }
 }

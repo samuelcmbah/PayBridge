@@ -1,17 +1,33 @@
-﻿using PayBridge.Application.DTOs;
+﻿using Microsoft.Extensions.Options;
+using PayBridge.Application.DTOs;
 using PayBridge.Application.IServices;
 using PayBridge.Domain.Entities;
 using PayBridge.Domain.Enums;
-using System;
-using System.Collections.Generic;
-using System.Linq;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Security.Cryptography;
 using System.Text;
-using System.Threading.Tasks;
+using System.Text.Json;
 
 namespace PayBridge.Infrastructure.PayStack
 {
     public class PaystackGateway : IPaymentGateway
     {
+        private readonly string _secretKey = "sk_test_xxxx"; // Use Environment Variables!
+        private readonly HttpClient httpClient;
+
+        public PaystackGateway(IOptions<PaystackSettings> options, IHttpClientFactory httpClientFactory)
+        {
+            _secretKey = options.Value.SecretKey;
+            httpClient = httpClientFactory.CreateClient();
+
+            // Setup HttpClient headers for Paystack
+            httpClient.BaseAddress = new Uri("https://api.paystack.co/");
+            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _secretKey);
+            httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        }
+
         public PaymentProvider Provider => PaymentProvider.Paystack;
 
         public async Task<PaymentInitResult> InitializeAsync(Payment payment)
@@ -24,23 +40,60 @@ namespace PayBridge.Infrastructure.PayStack
                 email = payment.ExternalUserId,
                 amount = amountInKobo,
                 reference = payment.Reference,
-                callback_url = payment.CallbackUrl, // Redirect user back to the app
+                callback_url = payment.CallbackUrl, 
                 metadata = new
                 {
-                    internal_id = payment.Id, // CRITICAL: This links the webhook back to our DB
+                    internal_id = payment.Id, //This links the webhook back to our DB
                     app_name = payment.AppName,
                     purpose = payment.Purpose.ToString()
                 }
             };
 
-            // TODO: Use HttpClient to call "https://api.paystack.co/transaction/initialize"
-            // For now, return a dummy result
-            return new PaymentInitResult(payment.Reference, "https://checkout.paystack.com/simulate-url");
+            var response = await httpClient.PostAsJsonAsync("transaction/initialize", paystackPayload);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new Exception("Paystack initialization failed.");
+            }
+
+            var content = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+            // Extract the authorization_url from Paystack's nested response data
+            var authUrl = content.GetProperty("data").GetProperty("authorization_url").GetString();
+
+            return new PaymentInitResult(payment.Reference, authUrl ?? throw new Exception("Could not get URL from Paystack"));
         }
 
-        public Task<PaymentVerificationResult> VerifyAsync(string reference)
+        public Task<bool> VerifySignatureAsync(string jsonPayload, string signature)
         {
-            throw new NotImplementedException();
+            // Paystack security: Hash the payload with your secret key
+            using var hmac = new HMACSHA512(Encoding.UTF8.GetBytes(_secretKey));
+            var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(jsonPayload));
+            var result = Convert.ToHexString(hash).ToLower();
+
+            // If our hash matches the header signature, it's a real request
+            return Task.FromResult(result == signature);
+        }
+
+        public Task<PaymentVerificationResult> ParseWebhookAsync(string jsonPayload)
+        {
+            var doc = JsonDocument.Parse(jsonPayload);
+
+            if (!doc.RootElement.TryGetProperty("data", out var data))
+                throw new InvalidOperationException("Invalid webhook payload: missing data");
+
+            var reference = data.GetProperty("reference").GetString();
+            if (string.IsNullOrWhiteSpace(reference))
+                throw new InvalidOperationException("Webhook reference is missing");
+
+            var amountInKobo = data.GetProperty("amount").GetInt32();
+
+            return Task.FromResult(
+                new PaymentVerificationResult(
+                    Reference: reference,
+                    Amount: amountInKobo / 100m
+                )
+            );
         }
     }
 }
