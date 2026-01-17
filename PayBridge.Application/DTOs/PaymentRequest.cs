@@ -13,8 +13,10 @@ namespace PayBridge.Application.DTOs
         decimal Amount,
         PaymentPurpose Purpose,
         PaymentProvider Provider,
-        string CallbackUrl,
+        
         string AppName,
-        string ExternalReference // The OrderId from the app
+        string ExternalReference, // The OrderId from the app
+        string RedirectUrl,
+        string NotificationUrl
     );
 }

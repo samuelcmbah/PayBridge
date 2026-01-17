@@ -22,7 +22,8 @@ namespace PayBridge.Domain.Entities
         // Tracking for the calling apps (SportStore/ExpenseVista)
         public string AppName { get; private set; }
         public string ExternalReference { get; private set; } // e.g., OrderId
-        public string CallbackUrl { get; private set; } // Where user goes after UI payment
+        public string RedirectUrl { get; private set; } // Where user goes after UI payment
+        public string NotificationUrl { get; private set; } // Where paybridge returns to the app n
 
         public DateTime CreatedAt { get; private set; }
         public DateTime? VerifiedAt { get; private set; }
@@ -31,7 +32,7 @@ namespace PayBridge.Domain.Entities
 
         public Payment(string reference, PaymentProvider provider, PaymentPurpose purpose,
                        decimal amount, string externalUserId, string appName,
-                       string externalReference, string callbackUrl)
+                       string externalReference, string redirectUrl, string notificationUrl)
         {
             Id = Guid.NewGuid();
             Reference = reference;
@@ -42,7 +43,8 @@ namespace PayBridge.Domain.Entities
             ExternalUserId = externalUserId;
             AppName = appName;
             ExternalReference = externalReference;
-            CallbackUrl = callbackUrl;
+            RedirectUrl = redirectUrl;
+            NotificationUrl = notificationUrl;
             Status = PaymentStatus.Pending;
             CreatedAt = DateTime.UtcNow;
         }

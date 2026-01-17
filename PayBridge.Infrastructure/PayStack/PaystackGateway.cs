@@ -40,7 +40,7 @@ namespace PayBridge.Infrastructure.PayStack
                 email = payment.ExternalUserId,
                 amount = amountInKobo,
                 reference = payment.Reference,
-                callback_url = payment.CallbackUrl, 
+                callback_url = payment.RedirectUrl, 
                 metadata = new
                 {
                     internal_id = payment.Id, //This links the webhook back to our DB

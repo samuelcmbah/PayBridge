@@ -68,7 +68,8 @@ namespace PayBridge.Application.Services
                 reference, request.Provider, 
                 request.Purpose, request.Amount,
                 request.ExternalUserId, request.AppName, 
-                request.ExternalReference, request.CallbackUrl
+                request.ExternalReference, request.RedirectUrl,
+                request.NotificationUrl
             );
 
             // Persist to DB first (Ensures we have a record before the user leaves our site)
