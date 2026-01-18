@@ -14,9 +14,9 @@ namespace PayBridge.Infrastructure.ExternalServices
     {
         private readonly HttpClient httpClient;
 
-        public AppNotificationService(HttpClient httpClient)
+        public AppNotificationService(IHttpClientFactory httpClient)
         {
-            this.httpClient = httpClient;
+            this.httpClient = httpClient.CreateClient();
         }
 
         public async Task NotifyAppAsync(Payment payment)
@@ -31,7 +31,23 @@ namespace PayBridge.Infrastructure.ExternalServices
 
             // We use the RedirectUrl or a specific WebhookUrl stored in the DB
             // For a portfolio, sending it to the RedirectUrl's API endpoint is fine.
-            await httpClient.PostAsJsonAsync(payment.CallbackUrl, payload);
+            try
+            {
+                var response = await httpClient.PostAsJsonAsync(payment.NotificationUrl, payload);
+                Console.WriteLine($"🔔 Notifying app at: {payment.NotificationUrl}");
+                Console.WriteLine($"📦 Payload: {System.Text.Json.JsonSerializer.Serialize(payload)}");
+                if (!response.IsSuccessStatusCode)
+                {
+                    var error = await response.Content.ReadAsStringAsync();
+                    // Log the error for debugging
+                    Console.WriteLine($"Failed to notify app: {error}");
+                }
+            }
+            catch (Exception ex)
+            {
+                // Log but don't throw - webhook notification is best-effort
+                Console.WriteLine($"Error notifying app: {ex.Message}");
+            }
         }
     }
 }
