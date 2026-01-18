@@ -1,4 +1,6 @@
-﻿using PayBridge.Application.DTOs;
+﻿using Microsoft.Extensions.Logging;
+using PayBridge.Application.Common;
+using PayBridge.Application.DTOs;
 using PayBridge.Application.IServices;
 using PayBridge.Domain.Entities;
 using PayBridge.Domain.Enums;
@@ -15,14 +17,156 @@ namespace PayBridge.Application.Services
         private readonly IPaymentRepository paymentRepository;
         private readonly IAppNotificationService appNotificationService;
         private readonly IEnumerable<IPaymentGateway> gateways;
+        private readonly ILogger<PaymentService> logger;
 
         public PaymentService(IPaymentRepository paymentRepository,
             IAppNotificationService appNotificationService,
-            IEnumerable<IPaymentGateway> gateways)
+            IEnumerable<IPaymentGateway> gateways,
+            ILogger<PaymentService> logger)
         {
             this.paymentRepository = paymentRepository;
             this.appNotificationService = appNotificationService;
             this.gateways = gateways;
+            this.logger = logger;
+        }
+
+        public async Task<Result<PaymentInitResult>> InitializePaymentAsync(PaymentRequest request)
+        {
+            logger.LogInformation(
+                "Initializing payment - AppName: {AppName}, Amount: {Amount}, Provider: {Provider}, ExternalRef: {ExternalReference}",
+                request.AppName, request.Amount, request.Provider, request.ExternalReference
+            );
+
+
+            // Check for existing pending payment (Idempotency)
+            var existingPayment = await paymentRepository.GetByExternalReferenceAsync(request.AppName, request.ExternalReference);
+
+            if (existingPayment != null && existingPayment.Status == PaymentStatus.Pending)
+            {
+                logger.LogInformation(
+                    "Found existing pending payment with reference {Reference} for ExternalRef: {ExternalReference}",
+                    existingPayment.Reference, request.ExternalReference
+                );
+                var existingGateway = gateways.FirstOrDefault(g => g.Provider == existingPayment.Provider);
+
+                if(existingGateway == null)
+                {
+                    return Result<PaymentInitResult>.Failure(
+                        "Payment gateway for existing payment is no longer available",
+                        "GATEWAY_UNAVAILABLE"
+                    );
+                }
+                try
+                {
+                    var existingResult = await existingGateway.InitializeAsync(existingPayment);
+                    return Result<PaymentInitResult>.Success(existingResult);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to reinitialize existing payment {Reference}", existingPayment.Reference);
+                    return Result<PaymentInitResult>.Failure(
+                        "Failed to retrieve existing payment details",
+                        "EXISTING_PAYMENT_ERROR"
+                    );
+                }
+            }
+            //Resolve the correct Gateway
+            var gateway = gateways.FirstOrDefault(g => g.Provider == request.Provider);
+
+            if (gateway == null)
+            {
+                logger.LogWarning(
+                    "Payment provider '{Provider}' is not supported. Available providers: {AvailableProviders}",
+                    request.Provider,
+                    string.Join(", ", gateways.Select(g => g.Provider))
+                );
+
+                return Result<PaymentInitResult>.Failure(
+                    $"Payment provider '{request.Provider}' is not supported",
+                    "UNSUPPORTED_PROVIDER"
+                );
+            }
+
+            // Generate internal reference and create domain entity
+            var reference = $"PB_{Guid.NewGuid():N}";
+
+            var payment = new Payment(
+                reference,
+                request.Provider,
+                request.Purpose,
+                request.Amount,
+                request.ExternalUserId,
+                request.AppName,
+                request.ExternalReference,
+                request.RedirectUrl,
+                request.NotificationUrl
+            );
+
+            // Persist to DB first
+            try
+            {
+                await paymentRepository.AddAsync(payment);
+                await paymentRepository.SaveChangesAsync();
+
+                logger.LogInformation(
+                    "Payment record created successfully - Reference: {Reference}",
+                    payment.Reference
+                );
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(
+                    ex,
+                    "Failed to save payment to database - Reference: {Reference}, ExternalRef: {ExternalReference}",
+                    reference, request.ExternalReference
+                );
+
+                return Result<PaymentInitResult>.Failure(
+                    "Failed to create payment record. Please try again.",
+                    "DATABASE_ERROR"
+                );
+            }
+
+            // Call Gateway to initialize payment
+            try
+            {
+                var result = await gateway.InitializeAsync(payment);
+
+                logger.LogInformation(
+                    "Payment initialized successfully with {Provider} - Reference: {Reference}, AuthUrl: {AuthUrl}",
+                    request.Provider, payment.Reference, result.AuthorizationUrl
+                );
+
+                return Result<PaymentInitResult>.Success(result);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(
+                    ex,
+                    "Failed to initialize payment with {Provider} - Reference: {Reference}",
+                    request.Provider, payment.Reference
+                );
+
+                // Try to mark payment as failed
+                try
+                {
+                    payment.MarkFailed();
+                    await paymentRepository.SaveChangesAsync();
+                }
+                catch (Exception saveEx)
+                {
+                    logger.LogError(
+                        saveEx,
+                        "Failed to mark payment as failed in database - Reference: {Reference}",
+                        payment.Reference
+                    );
+                }
+
+                return Result<PaymentInitResult>.Failure(
+                    $"Failed to initialize payment with {request.Provider}. Please try again.",
+                    "GATEWAY_INITIALIZATION_ERROR"
+                );
+            }
         }
 
         public async Task HandleWebhookAsync(string provider, string jsonPayload, string signature)
@@ -58,40 +202,6 @@ namespace PayBridge.Application.Services
             await appNotificationService.NotifyAppAsync(payment);
         }
 
-        public async Task<PaymentInitResult> InitializePaymentAsync(PaymentRequest request)
-        {
-            // Generate internal reference
-            var reference = $"PB_{Guid.NewGuid():N}";
-
-            // Create Domain Entity
-            var payment = new Payment(
-                reference, request.Provider, 
-                request.Purpose, request.Amount,
-                request.ExternalUserId, request.AppName, 
-                request.ExternalReference, request.RedirectUrl,
-                request.NotificationUrl
-            );
-
-            // Persist to DB first (Ensures we have a record before the user leaves our site)
-            await paymentRepository.AddAsync(payment);
-            await paymentRepository.SaveChangesAsync();
-
-            // Resolve the correct Gateway (Paystack/Flutterwave)
-            var gateway = gateways.FirstOrDefault(g => g.Provider == request.Provider) 
-                            ?? throw new Exception("Provider not supported");
-
-            try
-            {
-                // 5. Call Gateway
-                return await gateway.InitializeAsync(payment);
-            }
-            catch
-            {
-                // Fail gracefully if Provider is down
-                payment.MarkFailed();
-                await paymentRepository.SaveChangesAsync();
-                throw;
-            }
-        }
+        
     }
 }

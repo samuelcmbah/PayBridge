@@ -29,6 +29,12 @@ namespace PayBridge.Infrastructure.Persistence
             return payment;
         }
 
+        public async Task<Payment?> GetByExternalReferenceAsync(string appName, string externalReference)
+        {
+            return await context.Payments
+                .FirstOrDefaultAsync(p => p.AppName == appName && p.ExternalReference == externalReference);
+        }
+
         public async Task SaveChangesAsync()
         {
             await context.SaveChangesAsync();

@@ -21,7 +21,16 @@ namespace PayBridge.API.Controllers
         public async Task<IActionResult> Initialize([FromBody] PaymentRequest request)
         {
             var result = await paymentService.InitializePaymentAsync(request);
-            return Ok(result);
+            if (!result.IsSuccess)
+            {
+                return BadRequest(new
+                {
+                    error = result.Error,
+                    errorCode = result.ErrorCode
+                });
+            }
+
+            return Ok(result.Data);
         }
     }
 }

@@ -1,4 +1,5 @@
-﻿using PayBridge.Application.DTOs;
+﻿using PayBridge.Application.Common;
+using PayBridge.Application.DTOs;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -9,7 +10,7 @@ namespace PayBridge.Application.IServices
 {
     public interface IPaymentService
     {
-        Task<PaymentInitResult> InitializePaymentAsync(PaymentRequest request);
+        Task<Result<PaymentInitResult>> InitializePaymentAsync(PaymentRequest request);
 
         Task HandleWebhookAsync(string provider, string jsonPayload, string signature);
     }
