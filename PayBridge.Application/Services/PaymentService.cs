@@ -87,11 +87,9 @@ namespace PayBridge.Application.Services
                 );
             }
 
-            // Generate internal reference and create domain entity
-            var reference = $"PB_{Guid.NewGuid():N}";
+            // create domain entity
 
             var payment = new Payment(
-                reference,
                 request.Provider,
                 request.Purpose,
                 request.Amount,

@@ -10,32 +10,29 @@ namespace PayBridge.Domain.Entities
     public class Payment
     {
         public Guid Id { get; private set; }
-        public string Reference { get; private set; } // Our internal Ref: PB_123...
+        public string Reference { get; private set; } = default!;
         public PaymentProvider Provider { get; private set; }
         public PaymentStatus Status { get; private set; }
         public PaymentPurpose Purpose { get; private set; }
-
         public decimal Amount { get; private set; }
-        public string Currency { get; private set; } // e.g., "NGN"
-        public string ExternalUserId { get; private set; } // User's email
-
+        public string Currency { get; private set; } = default!;
+        public string ExternalUserId { get; private set; } = default!; // User's email
         // Tracking for the calling apps (SportStore/ExpenseVista)
-        public string AppName { get; private set; }
-        public string ExternalReference { get; private set; } // e.g., OrderId
-        public string RedirectUrl { get; private set; } // Where user goes after UI payment
-        public string NotificationUrl { get; private set; } // Where paybridge returns to the app n
-
+        public string AppName { get; private set; } = default!;
+        public string ExternalReference { get; private set; } = default!; // e.g., OrderId
+        public string RedirectUrl { get; private set; } = default!; // Where user goes after UI payment
+        public string NotificationUrl { get; private set; } = default!; // Where paybridge returns to the app n
         public DateTime CreatedAt { get; private set; }
         public DateTime? VerifiedAt { get; private set; }
 
-        private Payment() { } // For EF Core
+        private Payment() { } // ef core needs a parameterless constructor when querying database. it is private so app code cant use it
 
-        public Payment(string reference, PaymentProvider provider, PaymentPurpose purpose,
+        public Payment(PaymentProvider provider, PaymentPurpose purpose,
                        decimal amount, string externalUserId, string appName,
                        string externalReference, string redirectUrl, string notificationUrl)
         {
             Id = Guid.NewGuid();
-            Reference = reference;
+            Reference = $"PB_{Guid.NewGuid():N}";
             Provider = provider;
             Purpose = purpose;
             Amount = amount;
