@@ -12,6 +12,6 @@ namespace PayBridge.Application.IServices
     {
         Task<Result<PaymentInitResult>> InitializePaymentAsync(PaymentRequest request);
 
-        Task HandleWebhookAsync(string provider, string jsonPayload, string signature);
+        Task<WebhookResult> HandleWebhookAsync(string provider, string jsonPayload, string signature);
     }
 }
