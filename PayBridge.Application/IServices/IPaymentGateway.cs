@@ -1,4 +1,5 @@
-﻿using PayBridge.Application.DTOs;
+﻿using PayBridge.Application.Common;
+using PayBridge.Application.DTOs;
 using PayBridge.Domain.Entities;
 using PayBridge.Domain.Enums;
 using System;
@@ -13,10 +14,16 @@ namespace PayBridge.Application.IServices
     {
         PaymentProvider Provider { get; }
 
-        Task<PaymentInitResult> InitializeAsync(Payment request);
+        Task<Result<PaymentInitResult>> InitializeAsync(Payment request);
 
-        Task<bool> VerifySignatureAsync(string jsonPayload, string signature);
+        /// <summary>
+        /// Verifies that the webhook request came from the payment provider
+        /// </summary>
+        Result<bool> VerifySignature(string jsonPayload, string signature);
 
-        Task<PaymentVerificationResult> ParseWebhookAsync(string jsonPayload);
+        /// <summary>
+        /// Parses the webhook payload to extract payment information
+        /// </summary>
+        Result<PaymentVerificationResult> ParseWebhook(string jsonPayload);
     }
 }

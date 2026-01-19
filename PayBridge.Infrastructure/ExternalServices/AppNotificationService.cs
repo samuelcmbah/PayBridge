@@ -1,4 +1,5 @@
-﻿using PayBridge.Application.IServices;
+﻿using Microsoft.Extensions.Logging;
+using PayBridge.Application.IServices;
 using PayBridge.Domain.Entities;
 using System;
 using System.Collections.Generic;
@@ -13,10 +14,12 @@ namespace PayBridge.Infrastructure.ExternalServices
     public class AppNotificationService : IAppNotificationService
     {
         private readonly HttpClient httpClient;
+        private readonly ILogger<AppNotificationService> logger;
 
-        public AppNotificationService(IHttpClientFactory httpClient)
+        public AppNotificationService(IHttpClientFactory httpClient, ILogger<AppNotificationService> logger)
         {
             this.httpClient = httpClient.CreateClient();
+            this.logger = logger;
         }
 
         public async Task NotifyAppAsync(Payment payment)
@@ -31,22 +34,46 @@ namespace PayBridge.Infrastructure.ExternalServices
 
             // We use the RedirectUrl or a specific WebhookUrl stored in the DB
             // For a portfolio, sending it to the RedirectUrl's API endpoint is fine.
+                logger.LogInformation(
+                    "Sending payment notification. PaymentReference: {PaymentReference}, Url: {Url}",
+                    payment.Reference,
+                    payment.NotificationUrl
+                );
             try
             {
                 var response = await httpClient.PostAsJsonAsync(payment.NotificationUrl, payload);
-                Console.WriteLine($"🔔 Notifying app at: {payment.NotificationUrl}");
-                Console.WriteLine($"📦 Payload: {System.Text.Json.JsonSerializer.Serialize(payload)}");
-                if (!response.IsSuccessStatusCode)
+
+                if (response.IsSuccessStatusCode)
                 {
-                    var error = await response.Content.ReadAsStringAsync();
-                    // Log the error for debugging
-                    Console.WriteLine($"Failed to notify app: {error}");
+                    logger.LogInformation(
+                        "Successfully notified app for PaymentReference: {PaymentReference}",
+                        payment.Reference
+                    );
+                    return;
                 }
+                var errorBody = await response.Content.ReadAsStringAsync();
+
+                logger.LogWarning(
+                    "Failed to notify app for PaymentReference: {PaymentReference}. StatusCode: {StatusCode}. Response: {Response}",
+                    payment.Reference, (int)response.StatusCode, errorBody
+                );
+            }
+            catch (TaskCanceledException ex)
+            {
+                logger.LogError(
+                    ex,
+                    "Timeout while notifying app for PaymentReference: {PaymentReference}. Url: {Url}",
+                    payment.Reference,
+                    payment.NotificationUrl
+                );
             }
             catch (Exception ex)
             {
-                // Log but don't throw - webhook notification is best-effort
-                Console.WriteLine($"Error notifying app: {ex.Message}");
+                logger.LogCritical(
+                    ex,
+                    "Unexpected error while notifying app for PaymentReference: {PaymentReference}",
+                    payment.Reference
+                );
             }
         }
     }

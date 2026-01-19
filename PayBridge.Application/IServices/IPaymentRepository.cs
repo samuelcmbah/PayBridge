@@ -11,6 +11,7 @@ namespace PayBridge.Application.IServices
     {
         Task AddAsync(Payment payment);
         Task<Payment?> GetByReferenceAsync(string reference);
+        Task<Payment?> GetByExternalReferenceAsync(string appName, string externalReference); 
         Task SaveChangesAsync();
     }
 }
