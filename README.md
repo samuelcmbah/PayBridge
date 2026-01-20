@@ -4,7 +4,8 @@ A centralized payment gateway service that abstracts multiple payment providers 
 
 ## 🎯 Overview
 
-PayBridge acts as a unified payment interface for multiple applications (SportStore, ExpenseVista, etc.), allowing them to process payments through various providers without directly integrating with each provider's API.
+PayBridge acts as a unified payment interface for multiple applications ([SportStore](https://github.com/samuelcmbah/SportStore), [ExpenseVista](https://github.com/samuelcmbah/ExpenseVista.API
+), etc.), allowing them to process payments through various providers without directly integrating with each provider's API.
 
 ### Key Features
 
