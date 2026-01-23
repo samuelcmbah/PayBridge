@@ -441,9 +441,10 @@ Contributions are welcome! Please follow these steps:
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## 📧 Contact
-
-For questions or support, please open an issue on GitHub.
+## 🧑‍💻 Author
+* Samuel Mbah
+* GitHub: [samuelcmbah](https://github.com/samuelcmbah)
+* LinkedIn: [Samuel Mbah](https://linkedin.com/in/samuelcmbah)
 
 ---
 
