@@ -85,58 +85,22 @@ namespace PayBridge.Application.Services
             );
 
             // Persist to DB first
-            try
+            var saveResult = await SavePaymentAsync( payment );
+            if (!saveResult.IsSuccess)
             {
-                await paymentRepository.AddAsync(payment);
-                await paymentRepository.SaveChangesAsync();
+                return Result<PaymentInitResult>.Failure(saveResult.Error, "DATABASE_ERROR");
             }
-            catch (Exception ex)
-            {
-                logger.LogError(
-                    ex,
-                    "Failed to save payment to database - Reference: {Reference}, ExternalRef: {ExternalReference}",
-                    payment.Reference, request.ExternalReference
-                );
-                return Result<PaymentInitResult>.Failure(
-                    "Failed to create payment record. Please try again.",
-                    "DATABASE_ERROR"
-                );
-            }
+
 
             // Call Gateway to initialize payment
-            try
+            var gatewayResult = await gateway.InitializeAsync(payment);
+            if (!gatewayResult.IsSuccess)
             {
-                var result = await gateway.InitializeAsync(payment);
-                return result;
+                await MarkPaymentAsFailedAsync(payment); // Fire and forget
+                return Result<PaymentInitResult>.Failure(gatewayResult.Error, "GATEWAY_ERROR");
             }
-            catch (Exception ex)
-            {
-                logger.LogError(
-                    ex,
-                    "Failed to initialize payment with {Provider} - Reference: {Reference}",
-                    request.Provider, payment.Reference
-                );
 
-                // Try to mark payment as failed
-                try
-                {
-                    payment.MarkFailed();
-                    await paymentRepository.SaveChangesAsync();
-                }
-                catch (Exception saveEx)
-                {
-                    logger.LogError(
-                        saveEx,
-                        "Failed to mark payment as failed in database - Reference: {Reference}",
-                        payment.Reference
-                    );
-                }
-
-                return Result<PaymentInitResult>.Failure(
-                    $"Failed to initialize payment with {request.Provider}. Please try again.",
-                    "GATEWAY_INITIALIZATION_ERROR"
-                );
-            }
+            return gatewayResult;
         }
 
         public async Task<WebhookResult> HandleWebhookAsync(string provider, string jsonPayload, string signature)
@@ -223,5 +187,33 @@ namespace PayBridge.Application.Services
         }
 
         
+        private async Task<Result<bool>> SavePaymentAsync(Payment payment)
+        {
+            try
+            {
+                await paymentRepository.AddAsync(payment);
+                await paymentRepository.SaveChangesAsync();
+                return Result<bool>.Success(true);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to save payment {Reference}", payment.Reference);
+                return Result<bool>.Failure("Database save failed");
+            }
+        }
+
+        private async Task MarkPaymentAsFailedAsync(Payment payment)
+        {
+            try
+            {
+                payment.MarkFailed();
+                await paymentRepository.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                // Log but don't throw - this is a best-effort operation
+                logger.LogError(ex, "Failed to mark payment as failed {Reference}", payment.Reference);
+            }
+        }
     }
 }
