@@ -17,15 +17,14 @@ namespace PayBridge.Domain.Entities
         public decimal Amount { get; private set; }
         public string Currency { get; private set; } = default!;
         public string ExternalUserId { get; private set; } = default!; // User's email
-        // Tracking for the calling apps (SportStore/ExpenseVista)
         public string AppName { get; private set; } = default!;
         public string ExternalReference { get; private set; } = default!; // e.g., OrderId
-        public string RedirectUrl { get; private set; } = default!; // Where user goes after UI payment
-        public string NotificationUrl { get; private set; } = default!; // Where paybridge returns to the app n
+        public string RedirectUrl { get; private set; } = default!; 
+        public string NotificationUrl { get; private set; } = default!; 
         public DateTime CreatedAt { get; private set; }
         public DateTime? VerifiedAt { get; private set; }
 
-        private Payment() { } // ef core needs a parameterless constructor when querying database. it is private so app code cant use it
+        private Payment() { } // ef core needs a parameterless constructor when querying database. it is private so that app code cant use it
 
         public Payment(PaymentProvider provider, PaymentPurpose purpose,
                        decimal amount, string externalUserId, string appName,
@@ -46,13 +45,37 @@ namespace PayBridge.Domain.Entities
             CreatedAt = DateTime.UtcNow;
         }
 
-        public void MarkSuccessful()
+        public PaymentProcessingResult ProcessSuccessfulPayment(decimal receivedAmount)
+        {
+            if (Status != PaymentStatus.Pending)
+                return PaymentProcessingResult.AlreadyProcessed;
+
+            if (receivedAmount != Amount)
+            {
+                MarkFailed();
+                return PaymentProcessingResult.AmountMismatch;
+            }
+
+            MarkSuccessful();
+            return PaymentProcessingResult.Success;
+        }
+
+        public void MarkInitializationFailed()
+        {
+            if (Status != PaymentStatus.Pending)
+                return;
+
+            MarkFailed();
+        }
+
+
+        private void MarkSuccessful()
         {
             Status = PaymentStatus.Success;
             VerifiedAt = DateTime.UtcNow;
         }
 
-        public void MarkFailed()
+        private void MarkFailed()
         {
             Status = PaymentStatus.Failed;
             VerifiedAt = DateTime.UtcNow;

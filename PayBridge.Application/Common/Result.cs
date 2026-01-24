@@ -10,10 +10,10 @@ namespace PayBridge.Application.Common
     {
         public bool IsSuccess { get; }
         public T? Data { get; }
-        public string? Error { get; }
+        public string Error { get; }
         public string? ErrorCode { get; }
 
-        private Result(bool isSuccess, T? data, string? error, string? errorCode)
+        private Result(bool isSuccess, T? data, string error, string? errorCode)
         {
             IsSuccess = isSuccess;
             Data = data;
@@ -21,9 +21,17 @@ namespace PayBridge.Application.Common
             ErrorCode = errorCode;
         }
 
-        public static Result<T> Success(T data) => new(true, data, null, null);
+        public static Result<T> Success(T data)
+        {
+            return new(true, data, string.Empty, null);
+        }
+            
+        public static Result<T> Failure(string error, string? errorCode = null)
+        {
+            if (error is null)
+                throw new ArgumentNullException(nameof(error));
 
-        public static Result<T> Failure(string error, string? errorCode = null) =>
-            new(false, default, error, errorCode);
+            return new(false, default, error, errorCode);
+        }
     }
 }
