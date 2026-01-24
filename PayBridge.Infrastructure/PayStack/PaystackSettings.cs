@@ -9,6 +9,7 @@ namespace PayBridge.Infrastructure.PayStack
     //uses the init keyword so that the values can only be set during startup.
     public record PaystackSettings
     {
+        public string BaseUrl { get; init; } = default!;
         public string SecretKey { get; init; } = default!;
         public string PublicKey { get; init; } = default!;
         public string WebhookSecret { get; init; } = default!;
