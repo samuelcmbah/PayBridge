@@ -39,7 +39,7 @@ namespace PayBridge.Application.Services
             {
                 var existingGateway = gateways.FirstOrDefault(g => g.Provider == existingPayment.Provider);
 
-                if(existingGateway == null)
+                if (existingGateway == null)
                 {
                     return Result<PaymentInitResult>.Failure(
                         "Payment gateway for existing payment is no longer available",
@@ -85,7 +85,7 @@ namespace PayBridge.Application.Services
             );
 
             // Persist to DB first
-            var saveResult = await SavePaymentAsync( payment );
+            var saveResult = await SavePaymentAsync(payment);
             if (!saveResult.IsSuccess)
             {
                 return Result<PaymentInitResult>.Failure(saveResult.Error, "DATABASE_ERROR");
@@ -94,10 +94,26 @@ namespace PayBridge.Application.Services
 
             // Call Gateway to initialize payment
             var gatewayResult = await gateway.InitializeAsync(payment);
+
             if (!gatewayResult.IsSuccess)
             {
-                await MarkPaymentAsFailedAsync(payment); // Fire and forget
-                return Result<PaymentInitResult>.Failure(gatewayResult.Error, "GATEWAY_ERROR");
+                payment.MarkInitializationFailed();
+
+                try
+                {
+                    await paymentRepository.SaveChangesAsync();
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex,
+                        "Failed to mark payment {Reference} as failed after gateway error",
+                        payment.Reference);
+                }
+
+                return Result<PaymentInitResult>.Failure(
+                    gatewayResult.Error,
+                    "GATEWAY_ERROR"
+                );
             }
 
             return gatewayResult;
@@ -140,27 +156,7 @@ namespace PayBridge.Application.Services
             {
                 return WebhookResult.Ignored($"Payment not found: {verification.Reference}");
             }
-
-            // Check if payment is already processed
-            if (payment.Status != PaymentStatus.Pending)
-            {
-                return WebhookResult.Ignored(
-                    $"Payment already processed with status: {payment.Status}"
-                );
-            }
-
-            // Validate amount (Security: ensure they paid what we asked)
-            if (verification.Amount != payment.Amount)
-            {
-                payment.MarkFailed();
-                await paymentRepository.SaveChangesAsync();
-
-                return WebhookResult.Failed(
-                    $"Amount mismatch - Expected: {payment.Amount}, Received: {verification.Amount}"
-                );
-            }
-
-            payment.MarkSuccessful();
+            var result = payment.ProcessSuccessfulPayment(verification.Amount);
 
             try
             {
@@ -172,21 +168,32 @@ namespace PayBridge.Application.Services
             }
 
             //Notify the calling application
-            try
+            if (result == PaymentProcessingResult.Success)
             {
-                await appNotificationService.NotifyAppAsync(payment);
-                return WebhookResult.Success();
+                try
+                {
+                    await appNotificationService.NotifyAppAsync(payment);
+                    return WebhookResult.Success();
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to notify app for payment {Reference}", payment.Reference);
+                    // The notification failure should be handled separately (retry queue, etc.)
+                    // For now, we swallow intentionally. Payment is aready successful
+                }
             }
-            catch (Exception ex)
+
+            return result switch
             {
-                // Log but don't fail - webhook was processed successfully
-                // The notification failure should be handled separately (retry queue, etc.)
-                // For now, we still return success because the payment was marked successful
-                return WebhookResult.Success();
-            }
+                PaymentProcessingResult.Success => WebhookResult.Success(),
+                PaymentProcessingResult.AmountMismatch => WebhookResult.Failed("Amount mismatch"),
+                _ => WebhookResult.Ignored("Already processed")
+
+            };
+
         }
 
-        
+
         private async Task<Result<bool>> SavePaymentAsync(Payment payment)
         {
             try
@@ -202,18 +209,6 @@ namespace PayBridge.Application.Services
             }
         }
 
-        private async Task MarkPaymentAsFailedAsync(Payment payment)
-        {
-            try
-            {
-                payment.MarkFailed();
-                await paymentRepository.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                // Log but don't throw - this is a best-effort operation
-                logger.LogError(ex, "Failed to mark payment as failed {Reference}", payment.Reference);
-            }
-        }
+       
     }
 }
