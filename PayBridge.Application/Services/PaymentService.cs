@@ -4,11 +4,6 @@ using PayBridge.Application.DTOs;
 using PayBridge.Application.IServices;
 using PayBridge.Domain.Entities;
 using PayBridge.Domain.Enums;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace PayBridge.Application.Services
 {
@@ -19,7 +14,8 @@ namespace PayBridge.Application.Services
         private readonly IEnumerable<IPaymentGateway> gateways;
         private readonly ILogger<PaymentService> logger;
 
-        public PaymentService(IPaymentRepository paymentRepository,
+        public PaymentService(
+            IPaymentRepository paymentRepository,
             IAppNotificationService appNotificationService,
             IEnumerable<IPaymentGateway> gateways,
             ILogger<PaymentService> logger)
@@ -33,46 +29,24 @@ namespace PayBridge.Application.Services
         public async Task<Result<PaymentInitResult>> InitializePaymentAsync(PaymentRequest request)
         {
             // Check for existing pending payment (Idempotency)
-            var existingPayment = await paymentRepository.GetByExternalReferenceAsync(request.AppName, request.ExternalReference);
+            var existingPayment = await paymentRepository.GetByExternalReferenceAsync(
+                request.AppName,
+                request.ExternalReference);
 
             if (existingPayment != null && existingPayment.Status == PaymentStatus.Pending)
             {
-                var existingGateway = gateways.FirstOrDefault(g => g.Provider == existingPayment.Provider);
-
-                if (existingGateway == null)
-                {
-                    return Result<PaymentInitResult>.Failure(
-                        "Payment gateway for existing payment is no longer available",
-                        "GATEWAY_UNAVAILABLE"
-                    );
-                }
-                try
-                {
-                    var existingResult = await existingGateway.InitializeAsync(existingPayment);
-                    return existingResult;
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "Failed to reinitialize existing payment {Reference}", existingPayment.Reference);
-                    return Result<PaymentInitResult>.Failure(
-                        "Failed to retrieve existing payment details",
-                        "EXISTING_PAYMENT_ERROR"
-                    );
-                }
+                return await ReinitializeExistingPaymentAsync(existingPayment);
             }
-            //Resolve the correct Gateway
-            var gateway = gateways.FirstOrDefault(g => g.Provider == request.Provider);
 
+            var gateway = ResolveGateway(request.Provider);
             if (gateway == null)
             {
-
                 return Result<PaymentInitResult>.Failure(
                     $"Payment provider '{request.Provider}' is not supported",
-                    "UNSUPPORTED_PROVIDER"
-                );
+                    "UNSUPPORTED_PROVIDER");
             }
 
-            // create domain entity
+            // Create domain entity
             var payment = new Payment(
                 request.Provider,
                 request.Purpose,
@@ -81,49 +55,36 @@ namespace PayBridge.Application.Services
                 request.AppName,
                 request.ExternalReference,
                 request.RedirectUrl,
-                request.NotificationUrl
-            );
+                request.NotificationUrl);
 
-            // Persist to DB first
             var saveResult = await SavePaymentAsync(payment);
             if (!saveResult.IsSuccess)
             {
-                return Result<PaymentInitResult>.Failure(saveResult.Error, "DATABASE_ERROR");
+                return Result<PaymentInitResult>.Failure(
+                    saveResult.Error,
+                    "DATABASE_ERROR");
             }
 
-
-            // Call Gateway to initialize payment
+            // Initialize with gateway
             var gatewayResult = await gateway.InitializeAsync(payment);
-
             if (!gatewayResult.IsSuccess)
             {
-                payment.MarkInitializationFailed();
-
-                try
-                {
-                    await paymentRepository.SaveChangesAsync();
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex,
-                        "Failed to mark payment {Reference} as failed after gateway error",
-                        payment.Reference);
-                }
+                await TryMarkPaymentAsFailedAsync(payment);
 
                 return Result<PaymentInitResult>.Failure(
                     gatewayResult.Error,
-                    "GATEWAY_ERROR"
-                );
+                    "GATEWAY_ERROR");
             }
 
             return gatewayResult;
         }
 
-        public async Task<WebhookResult> HandleWebhookAsync(string provider, string jsonPayload, string signature)
+        public async Task<WebhookResult> HandleWebhookAsync(
+            string provider,
+            string jsonPayload,
+            string signature)
         {
-            var gateway = gateways.FirstOrDefault(g =>
-                g.Provider.ToString().Equals(provider, StringComparison.OrdinalIgnoreCase));
-
+            var gateway = ResolveGateway(provider);
             if (gateway == null)
             {
                 return WebhookResult.Failed($"Unsupported provider: {provider}");
@@ -132,68 +93,97 @@ namespace PayBridge.Application.Services
             var signatureResult = gateway.VerifySignature(jsonPayload, signature);
             if (!signatureResult.IsSuccess)
             {
-                return WebhookResult.Failed($"Signature verification failed: {signatureResult.Error}");
+                return WebhookResult.Failed(
+                    $"Signature verification failed: {signatureResult.Error}");
             }
 
-            // Parse the payload to get our reference
             var parseResult = gateway.ParseWebhook(jsonPayload);
             if (!parseResult.IsSuccess)
             {
-                // Some parse failures are expected (e.g., unsupported event types)
-                if (parseResult.ErrorCode == "UNSUPPORTED_EVENT")
-                {
-                    return WebhookResult.Ignored($"Event type not processed: {parseResult.Error}");
-                }
-
-                return WebhookResult.Failed($"Failed to parse webhook: {parseResult.Error}");
+                return parseResult.ErrorCode == "UNSUPPORTED_EVENT"
+                    ? WebhookResult.Ignored($"Event type not processed: {parseResult.Error}")
+                    : WebhookResult.Failed($"Failed to parse webhook: {parseResult.Error}");
             }
 
             var verification = parseResult.Data!;
 
-            //Find the payment
             var payment = await paymentRepository.GetByReferenceAsync(verification.Reference);
             if (payment == null)
             {
                 return WebhookResult.Ignored($"Payment not found: {verification.Reference}");
             }
-            var result = payment.ProcessSuccessfulPayment(verification.Amount);
 
-            try
+            var processResult = payment.ProcessSuccessfulPayment(verification.Amount);
+
+            var saveResult = await TrySaveChangesAsync();
+            if (!saveResult.IsSuccess)
             {
-                await paymentRepository.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                return WebhookResult.Failed($"Failed to save payment status: {ex.Message}");
+                return WebhookResult.Failed($"Failed to save payment status: {saveResult.Error}");
             }
 
-            //Notify the calling application
-            if (result == PaymentProcessingResult.Success)
+            if (processResult == PaymentProcessingResult.Success)
             {
-                try
-                {
-                    await appNotificationService.NotifyAppAsync(payment);
-                    return WebhookResult.Success();
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "Failed to notify app for payment {Reference}", payment.Reference);
-                    // The notification failure should be handled separately (retry queue, etc.)
-                    // For now, we swallow intentionally. Payment is aready successful
-                }
+                await TryNotifyAppAsync(payment);
             }
 
-            return result switch
+            // Map result to webhook response
+            return processResult switch
             {
                 PaymentProcessingResult.Success => WebhookResult.Success(),
                 PaymentProcessingResult.AmountMismatch => WebhookResult.Failed("Amount mismatch"),
                 _ => WebhookResult.Ignored("Already processed")
-
             };
-
         }
 
+        #region Private Helper Methods
 
+        /// <summary>
+        /// Resolves the payment gateway for the given provider
+        /// </summary>
+        private IPaymentGateway? ResolveGateway(PaymentProvider provider)
+        {
+            return gateways.FirstOrDefault(g => g.Provider == provider);
+        }
+
+        /// <summary>
+        /// Resolves the payment gateway for the given provider name
+        /// </summary>
+        private IPaymentGateway? ResolveGateway(string providerName)
+        {
+            return gateways.FirstOrDefault(g =>
+                g.Provider.ToString().Equals(providerName, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        /// Attempts to reinitialize an existing pending payment
+        /// </summary>
+        private async Task<Result<PaymentInitResult>> ReinitializeExistingPaymentAsync(Payment payment)
+        {
+            var gateway = ResolveGateway(payment.Provider);
+            if (gateway == null)
+            {
+                return Result<PaymentInitResult>.Failure(
+                    "Payment gateway for existing payment is no longer available",
+                    "GATEWAY_UNAVAILABLE");
+            }
+
+           
+            var result = await gateway.InitializeAsync(payment);
+
+            if (!result.IsSuccess)
+            {
+                logger.LogError(
+                    "Failed to reinitialize existing payment {Reference}: {Error}",
+                    payment.Reference,
+                    result.Error);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Saves a payment to the database with error handling
+        /// </summary>
         private async Task<Result<bool>> SavePaymentAsync(Payment payment)
         {
             try
@@ -204,11 +194,73 @@ namespace PayBridge.Application.Services
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Failed to save payment {Reference}", payment.Reference);
+                logger.LogError(
+                    ex,
+                    "Failed to save payment {Reference}",
+                    payment.Reference);
                 return Result<bool>.Failure("Database save failed");
             }
         }
 
-       
+        /// <summary>
+        /// Attempts to save database changes with error handling
+        /// </summary>
+        private async Task<Result<bool>> TrySaveChangesAsync()
+        {
+            try
+            {
+                await paymentRepository.SaveChangesAsync();
+                return Result<bool>.Success(true);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to save changes to database");
+                return Result<bool>.Failure(ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Attempts to mark a payment as failed (fire-and-forget)
+        /// Best effort operation - failure is logged but not propagated
+        /// </summary>
+        private async Task TryMarkPaymentAsFailedAsync(Payment payment)
+        {
+            try
+            {
+                payment.MarkInitializationFailed();
+                await paymentRepository.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(
+                    ex,
+                    "Failed to mark payment {Reference} as failed after gateway error",
+                    payment.Reference);
+                // Swallow exception - this is a best-effort operation
+            }
+        }
+
+        /// <summary>
+        /// Attempts to notify the app about payment completion (fire-and-forget)
+        /// Best effort operation - failure is logged but not propagated
+        /// </summary>
+        private async Task TryNotifyAppAsync(Payment payment)
+        {
+            try
+            {
+                await appNotificationService.NotifyAppAsync(payment);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(
+                    ex,
+                    "Failed to notify app for payment {Reference}",
+                    payment.Reference);
+                // Swallow exception - payment is already marked successful
+                // Notification failures should be handled via retry queue
+            }
+        }
+
+        #endregion
     }
 }
