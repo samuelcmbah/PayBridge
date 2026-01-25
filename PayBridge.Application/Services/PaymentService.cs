@@ -124,7 +124,9 @@ namespace PayBridge.Application.Services
 
                 var verification = parseResult.Data!;
 
-                var payment = await paymentRepository.GetByReferenceAsync(verification.Reference);
+                var receivedReference = PaymentReference.Create(verification.Reference);
+
+                var payment = await paymentRepository.GetByReferenceAsync(receivedReference);
                 if (payment == null)
                 {
                     return WebhookResult.Ignored($"Payment not found: {verification.Reference}");
