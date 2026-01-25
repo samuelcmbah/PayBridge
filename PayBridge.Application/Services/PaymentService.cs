@@ -4,6 +4,9 @@ using PayBridge.Application.DTOs;
 using PayBridge.Application.IServices;
 using PayBridge.Domain.Entities;
 using PayBridge.Domain.Enums;
+using PayBridge.Domain.Exceptions;
+using PayBridge.Domain.ValueObjects;
+using System;
 
 namespace PayBridge.Application.Services
 {
@@ -38,101 +41,126 @@ namespace PayBridge.Application.Services
                 return await ReinitializeExistingPaymentAsync(existingPayment);
             }
 
-            var gateway = ResolveGateway(request.Provider);
-            if (gateway == null)
+            
+            try
             {
-                return Result<PaymentInitResult>.Failure(
-                    $"Payment provider '{request.Provider}' is not supported",
-                    "UNSUPPORTED_PROVIDER");
+                // Create value objects(may throw domain exceptions)
+                var amount = Money.Create(request.Amount);
+                var email = Email.Create(request.ExternalUserId);
+                var redirectUrl = Url.Create(request.RedirectUrl);
+                var notificationUrl = Url.Create(request.NotificationUrl);
+
+                // Create payment entity(may throw domain exceptions)
+                var payment = new Payment(
+                    request.Provider,
+                    request.Purpose,
+                    amount,
+                    email,
+                    request.AppName,
+                    request.ExternalReference,
+                    redirectUrl,
+                    notificationUrl);
+
+                var saveResult = await SavePaymentAsync(payment);
+                if (!saveResult.IsSuccess)
+                {
+                    return Result<PaymentInitResult>.Failure(
+                        saveResult.Error,
+                        "DATABASE_ERROR");
+                }
+
+                var gateway = ResolveGateway(request.Provider);
+                if (gateway == null)
+                {
+                    return Result<PaymentInitResult>.Failure(
+                        $"Payment provider '{request.Provider}' is not supported",
+                        "UNSUPPORTED_PROVIDER");
+                }
+
+                var gatewayResult = await gateway.InitializeAsync(payment);
+                if (!gatewayResult.IsSuccess)
+                {
+                    await TryMarkPaymentAsFailedAsync(payment);
+
+                    return Result<PaymentInitResult>.Failure(
+                        gatewayResult.Error,
+                        "GATEWAY_ERROR");
+                }
+
+                return gatewayResult;
             }
-
-            // Create domain entity
-            var payment = new Payment(
-                request.Provider,
-                request.Purpose,
-                request.Amount,
-                request.ExternalUserId,
-                request.AppName,
-                request.ExternalReference,
-                request.RedirectUrl,
-                request.NotificationUrl);
-
-            var saveResult = await SavePaymentAsync(payment);
-            if (!saveResult.IsSuccess)
+            catch (DomainException ex)
             {
-                return Result<PaymentInitResult>.Failure(
-                    saveResult.Error,
-                    "DATABASE_ERROR");
+                logger.LogWarning(ex, "Domain validation failed");
+                return Result<PaymentInitResult>.Failure(ex.Message, ex.ErrorCode);
             }
-
-            // Initialize with gateway
-            var gatewayResult = await gateway.InitializeAsync(payment);
-            if (!gatewayResult.IsSuccess)
-            {
-                await TryMarkPaymentAsFailedAsync(payment);
-
-                return Result<PaymentInitResult>.Failure(
-                    gatewayResult.Error,
-                    "GATEWAY_ERROR");
-            }
-
-            return gatewayResult;
+           
         }
 
-        public async Task<WebhookResult> HandleWebhookAsync(
-            string provider,
-            string jsonPayload,
-            string signature)
+        public async Task<WebhookResult> HandleWebhookAsync(string provider, string jsonPayload, string signature)
         {
-            var gateway = ResolveGateway(provider);
-            if (gateway == null)
+            try
             {
-                return WebhookResult.Failed($"Unsupported provider: {provider}");
+                var gateway = ResolveGateway(provider);
+                if (gateway == null)
+                {
+                    return WebhookResult.Failed($"Unsupported provider: {provider}");
+                }
+
+                var signatureResult = gateway.VerifySignature(jsonPayload, signature);
+                if (!signatureResult.IsSuccess)
+                {
+                    return WebhookResult.Failed(
+                        $"Signature verification failed: {signatureResult.Error}");
+                }
+
+                var parseResult = gateway.ParseWebhook(jsonPayload);
+                if (!parseResult.IsSuccess)
+                {
+                    return parseResult.ErrorCode == "UNSUPPORTED_EVENT"
+                        ? WebhookResult.Ignored($"Event type not processed: {parseResult.Error}")
+                        : WebhookResult.Failed($"Failed to parse webhook: {parseResult.Error}");
+                }
+
+                var verification = parseResult.Data!;
+
+                var payment = await paymentRepository.GetByReferenceAsync(verification.Reference);
+                if (payment == null)
+                {
+                    return WebhookResult.Ignored($"Payment not found: {verification.Reference}");
+                }
+
+                // Create Money value object
+                var receivedAmount = Money.Create(verification.Amount, payment.Amount.Currency);
+
+
+                var processResult = payment.ProcessSuccessfulPayment(receivedAmount);
+
+                var saveResult = await TrySaveChangesAsync();
+                if (!saveResult.IsSuccess)
+                {
+                    return WebhookResult.Failed($"Failed to save payment status: {saveResult.Error}");
+                }
+
+                if (processResult == PaymentProcessingResult.Success)
+                {
+                    await TryNotifyAppAsync(payment);
+                }
+
+                // Map result to webhook response
+                return processResult switch
+                {
+                    PaymentProcessingResult.Success => WebhookResult.Success(),
+                    PaymentProcessingResult.AmountMismatch => WebhookResult.Failed("Amount mismatch"),
+                    _ => WebhookResult.Ignored("Already processed")
+                };
             }
-
-            var signatureResult = gateway.VerifySignature(jsonPayload, signature);
-            if (!signatureResult.IsSuccess)
+            catch (DomainException ex)
             {
-                return WebhookResult.Failed(
-                    $"Signature verification failed: {signatureResult.Error}");
+                logger.LogError(ex, "Domain error processing webhook");
+                return WebhookResult.Failed(ex.Message);
             }
-
-            var parseResult = gateway.ParseWebhook(jsonPayload);
-            if (!parseResult.IsSuccess)
-            {
-                return parseResult.ErrorCode == "UNSUPPORTED_EVENT"
-                    ? WebhookResult.Ignored($"Event type not processed: {parseResult.Error}")
-                    : WebhookResult.Failed($"Failed to parse webhook: {parseResult.Error}");
-            }
-
-            var verification = parseResult.Data!;
-
-            var payment = await paymentRepository.GetByReferenceAsync(verification.Reference);
-            if (payment == null)
-            {
-                return WebhookResult.Ignored($"Payment not found: {verification.Reference}");
-            }
-
-            var processResult = payment.ProcessSuccessfulPayment(verification.Amount);
-
-            var saveResult = await TrySaveChangesAsync();
-            if (!saveResult.IsSuccess)
-            {
-                return WebhookResult.Failed($"Failed to save payment status: {saveResult.Error}");
-            }
-
-            if (processResult == PaymentProcessingResult.Success)
-            {
-                await TryNotifyAppAsync(payment);
-            }
-
-            // Map result to webhook response
-            return processResult switch
-            {
-                PaymentProcessingResult.Success => WebhookResult.Success(),
-                PaymentProcessingResult.AmountMismatch => WebhookResult.Failed("Amount mismatch"),
-                _ => WebhookResult.Ignored("Already processed")
-            };
+            
         }
 
         #region Private Helper Methods
