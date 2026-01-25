@@ -136,33 +136,37 @@ namespace PayBridge.Application.Services
                 var receivedAmount = Money.Create(verification.Amount, payment.Amount.Currency);
 
 
-                var processResult = payment.ProcessSuccessfulPayment(receivedAmount);
+                payment.ProcessSuccessfulPayment(receivedAmount);
 
                 var saveResult = await TrySaveChangesAsync();
                 if (!saveResult.IsSuccess)
                 {
                     return WebhookResult.Failed($"Failed to save payment status: {saveResult.Error}");
                 }
+                
+                //made it here? then ok to notify app
+                await TryNotifyAppAsync(payment);
 
-                if (processResult == PaymentProcessingResult.Success)
-                {
-                    await TryNotifyAppAsync(payment);
-                }
 
-                // Map result to webhook response
-                return processResult switch
-                {
-                    PaymentProcessingResult.Success => WebhookResult.Success(),
-                    PaymentProcessingResult.AmountMismatch => WebhookResult.Failed("Amount mismatch"),
-                    _ => WebhookResult.Ignored("Already processed")
-                };
+                return WebhookResult.Success();
+
+            }
+            catch (PaymentAmountMismatchException ex)
+            {
+                logger.LogWarning(ex, "Payment amount mismatch during webhook processing");
+                return WebhookResult.Failed(ex.Message);
+            }
+            catch (PaymentStateException ex)
+            {
+                logger.LogWarning(ex, "Invalid payment state");
+                return WebhookResult.Ignored(ex.Message);
             }
             catch (DomainException ex)
             {
                 logger.LogError(ex, "Domain error processing webhook");
                 return WebhookResult.Failed(ex.Message);
             }
-            
+
         }
 
         #region Private Helper Methods

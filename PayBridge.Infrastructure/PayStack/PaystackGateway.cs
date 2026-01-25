@@ -33,7 +33,7 @@ namespace PayBridge.Infrastructure.PayStack
         public async Task<Result<PaymentInitResult>> InitializeAsync(Payment payment)
         {
            
-            var amountInKobo = ConvertToKobo(payment.Amount);
+            var amountInKobo = ConvertToKobo(payment.Amount.Amount);
 
             var paystackPayload = BuildInitializePayload(payment);
 
@@ -116,7 +116,7 @@ namespace PayBridge.Infrastructure.PayStack
                     payment.Reference, authUrl
                 );
 
-                var result = new PaymentInitResult(payment.Reference, authUrl);
+                var result = new PaymentInitResult(payment.Reference.Value, authUrl);
                 return Result<PaymentInitResult>.Success(result);
             }
             catch (JsonException ex)
@@ -248,7 +248,7 @@ namespace PayBridge.Infrastructure.PayStack
             return new
             {
                 email = payment.ExternalUserId,
-                amount = ConvertToKobo(payment.Amount),
+                amount = ConvertToKobo(payment.Amount.Amount),
                 reference = payment.Reference,
                 callback_url = payment.RedirectUrl,
                 metadata = new

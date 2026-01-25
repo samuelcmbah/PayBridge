@@ -41,7 +41,7 @@ namespace PayBridge.Infrastructure.ExternalServices
                 );
             try
             {
-                var response = await httpClient.PostAsJsonAsync(payment.NotificationUrl, payload);
+                var response = await httpClient.PostAsJsonAsync(payment.NotificationUrl.Value, payload);
 
                 if (response.IsSuccessStatusCode)
                 {

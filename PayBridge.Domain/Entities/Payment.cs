@@ -54,7 +54,7 @@ public class Payment
         CreatedAt = DateTime.UtcNow;
     }
 
-    public PaymentProcessingResult ProcessSuccessfulPayment(Money receivedAmount)
+    public void ProcessSuccessfulPayment(Money receivedAmount)
     {
         if (Status != PaymentStatus.Pending)
             throw new PaymentStateException(
@@ -64,18 +64,23 @@ public class Payment
         if (!receivedAmount.Equals(Amount))
         {
             MarkFailed();
-            return PaymentProcessingResult.AmountMismatch;
+            throw new PaymentAmountMismatchException(
+                $"Expected {Amount}, received {receivedAmount}");
         }
 
         MarkSuccessful();
-        return PaymentProcessingResult.Success;
     }
 
-
+    /// <summary>
+    /// Marks payment initialization as failed
+    /// Can only be called on pending payments
+    /// </summary>
     public void MarkInitializationFailed()
     {
         if (Status != PaymentStatus.Pending)
-            return;
+            throw new PaymentStateException(
+                $"Cannot mark as initialization failed. Current status: {Status}",
+                "INVALID_STATE_TRANSITION");
 
         MarkFailed();
     }
