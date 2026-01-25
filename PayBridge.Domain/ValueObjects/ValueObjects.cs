@@ -39,8 +39,8 @@
         public override int GetHashCode()
         {
             return GetEqualityComponents()
-                .Select(x => x?.GetHashCode() ?? 0)
-                .Aggregate((x, y) => x ^ y);
+                .Aggregate(1, (current, next) =>
+                    HashCode.Combine(current, next?.GetHashCode() ?? 0));
         }
 
         /// <summary>
