@@ -247,10 +247,10 @@ namespace PayBridge.Infrastructure.PayStack
         {
             return new
             {
-                email = payment.ExternalUserId,
+                email = payment.ExternalUserId.Value,
                 amount = ConvertToKobo(payment.Amount.Amount),
-                reference = payment.Reference,
-                callback_url = payment.RedirectUrl,
+                reference = payment.Reference.Value,
+                callback_url = payment.RedirectUrl.Value,
                 metadata = new
                 {
                     internal_id = payment.Id,

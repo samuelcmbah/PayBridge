@@ -5,11 +5,20 @@ using PayBridge.Application.Services;
 using PayBridge.Infrastructure.ExternalServices;
 using PayBridge.Infrastructure.PayStack;
 using PayBridge.Infrastructure.Persistence;
+using Serilog;
 using System.Net.Http.Headers;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
+// Replace default logging with Serilog
+builder.Host.UseSerilog((_, logger) =>
+{
+    logger
+        .MinimumLevel.Debug()
+        .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
+        .WriteTo.Console();
+});
 
 builder.Services.Configure<PaystackSettings>(builder.Configuration.GetSection("Paystack"));
 //builder.Services.Configure<FlutterwaveSettings>(
@@ -39,6 +48,7 @@ builder.Services.AddScoped<IPaymentGateway, PaystackGateway>();
 builder.Services.AddScoped<IAppNotificationService, AppNotificationService>();
 
 
+
 builder.Services.AddControllers();
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
@@ -58,5 +68,7 @@ app.UseHttpsRedirection();
 app.UseAuthorization();
 
 app.MapControllers();
+
+app.UseSerilogRequestLogging();
 
 app.Run();
