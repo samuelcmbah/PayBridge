@@ -135,47 +135,27 @@ namespace PayBridge.Infrastructure.PayStack
         {
             try
             {
-                var doc = JsonDocument.Parse(jsonPayload);
+                var payload = JsonSerializer.Deserialize<PaystackWebhookPayload>(
+                        jsonPayload,
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-                // Validate structure
-                if (!doc.RootElement.TryGetProperty("event", out var eventElement))
+                if(payload?.Data == null)
                 {
                     return Result<PaymentVerificationResult>.Failure(
-                        "Webhook missing 'event' property",
+                        "Invalid webhook data",
                         "INVALID_STRUCTURE"
                     );
                 }
 
-                var eventType = eventElement.GetString();
-
-                // We only care about successful charges
-                if (eventType != "charge.success")
+                if(payload.Event != "charge.success")
                 {
                     return Result<PaymentVerificationResult>.Failure(
-                        $"Event type '{eventType}' is not processed",
+                        $"Event type '{payload.Event}' is not processed",
                         "UNSUPPORTED_EVENT"
                     );
                 }
 
-                if (!doc.RootElement.TryGetProperty("data", out var data))
-                {
-                    return Result<PaymentVerificationResult>.Failure(
-                        "Webhook missing 'data' property",
-                        "INVALID_STRUCTURE"
-                    );
-                }
-
-                // Extract reference
-                if (!data.TryGetProperty("reference", out var referenceElement))
-                {
-                    return Result<PaymentVerificationResult>.Failure(
-                        "Webhook missing payment reference",
-                        "MISSING_REFERENCE"
-                    );
-                }
-
-                var reference = referenceElement.GetString();
-                if (string.IsNullOrWhiteSpace(reference))
+                if (string.IsNullOrWhiteSpace(payload.Data.Reference))
                 {
                     return Result<PaymentVerificationResult>.Failure(
                         "Payment reference is empty",
@@ -183,35 +163,21 @@ namespace PayBridge.Infrastructure.PayStack
                     );
                 }
 
-                // Extract amount
-                if (!data.TryGetProperty("amount", out var amountElement))
-                {
-                    return Result<PaymentVerificationResult>.Failure(
-                        "Webhook missing payment amount",
-                        "MISSING_AMOUNT"
-                    );
-                }
+                var amountInNaira = payload.Data.Amount / 100m;
 
-                var amountInKobo = amountElement.GetInt32();
-                var amountInNaira = amountInKobo / 100m;
-
-                var result = new PaymentVerificationResult(reference, amountInNaira);
+                var result = new PaymentVerificationResult(payload.Data.Reference, amountInNaira);
                 return Result<PaymentVerificationResult>.Success(result);
+
             }
             catch (JsonException ex)
             {
+                _logger.LogError(ex, "Failed to deserialize Paystack webhook");
                 return Result<PaymentVerificationResult>.Failure(
-                    $"Failed to parse webhook JSON: {ex.Message}",
+                    "Invalid JSON format",
                     "JSON_PARSE_ERROR"
                 );
             }
-            catch (Exception ex)
-            {
-                return Result<PaymentVerificationResult>.Failure(
-                    $"Unexpected error parsing webhook: {ex.Message}",
-                    "PARSE_ERROR"
-                );
-            }
+            
         }
 
         #region Private Helper Methods

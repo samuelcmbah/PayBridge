@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace PayBridge.Infrastructure.PayStack.DTOs
 {
-    public class PaystackInitResponse
+    internal class PaystackInitResponse
     {
         public bool Status { get; set; }
         public string Message { get; set; } = default!;

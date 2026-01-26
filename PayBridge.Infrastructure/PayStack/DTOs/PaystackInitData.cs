@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace PayBridge.Infrastructure.PayStack.DTOs
 {
-    public class PaystackInitData
+    internal class PaystackInitData
     {
         [JsonPropertyName("authorization_url")] // Maps JSON snake_case to C# PascalCase
         public string AuthorizationUrl { get; set; } = default!;
