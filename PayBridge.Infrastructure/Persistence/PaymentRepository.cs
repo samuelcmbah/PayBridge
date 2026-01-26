@@ -1,6 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using PayBridge.Application.IServices;
 using PayBridge.Domain.Entities;
+using PayBridge.Domain.ValueObjects;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -22,7 +23,7 @@ namespace PayBridge.Infrastructure.Persistence
             await context.Payments.AddAsync(payment);
         }
 
-        public async Task<Payment?> GetByReferenceAsync(string reference)
+        public async Task<Payment?> GetByReferenceAsync(PaymentReference reference)
         {
             var payment = await context.Payments
                 .FirstOrDefaultAsync(p => p.Reference == reference);

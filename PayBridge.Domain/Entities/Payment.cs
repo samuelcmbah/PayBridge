@@ -1,84 +1,101 @@
 ﻿using PayBridge.Domain.Enums;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using PayBridge.Domain.Exceptions;
+using PayBridge.Domain.ValueObjects;
 
-namespace PayBridge.Domain.Entities
+namespace PayBridge.Domain.Entities;
+
+public class Payment
 {
-    public class Payment
+    public Guid Id { get; private set; }
+    public PaymentReference Reference { get; private set; } = default!;
+    public PaymentProvider Provider { get; private set; }
+    public PaymentStatus Status { get; private set; }
+    public PaymentPurpose Purpose { get; private set; }
+    public Money Amount { get; private set; }
+
+    public Email ExternalUserId { get; private set; } = default!; 
+    public string AppName { get; private set; } = default!;
+    public string ExternalReference { get; private set; } = default!; // e.g., OrderId
+    public Url RedirectUrl { get; private set; } = default!;
+    public Url NotificationUrl { get; private set; } = default!;
+
+    public DateTime CreatedAt { get; private set; }
+    public DateTime? VerifiedAt { get; private set; }
+
+    private Payment() { } // ef core needs a parameterless constructor when querying database. it is private so that app code cant use it
+
+    public Payment(
+            PaymentProvider provider,
+            PaymentPurpose purpose,
+            Money amount,
+            Email externalUserId,
+            string appName,
+            string externalReference,
+            Url redirectUrl,
+            Url notificationUrl)
     {
-        public Guid Id { get; private set; }
-        public string Reference { get; private set; } = default!;
-        public PaymentProvider Provider { get; private set; }
-        public PaymentStatus Status { get; private set; }
-        public PaymentPurpose Purpose { get; private set; }
-        public decimal Amount { get; private set; }
-        public string Currency { get; private set; } = default!;
-        public string ExternalUserId { get; private set; } = default!; // User's email
-        public string AppName { get; private set; } = default!;
-        public string ExternalReference { get; private set; } = default!; // e.g., OrderId
-        public string RedirectUrl { get; private set; } = default!; 
-        public string NotificationUrl { get; private set; } = default!; 
-        public DateTime CreatedAt { get; private set; }
-        public DateTime? VerifiedAt { get; private set; }
+        if (string.IsNullOrWhiteSpace(appName))
+            throw new PaymentStateException("AppName cannot be empty", "INVALID_APP_NAME");
 
-        private Payment() { } // ef core needs a parameterless constructor when querying database. it is private so that app code cant use it
+        if (string.IsNullOrWhiteSpace(externalReference))
+            throw new PaymentStateException("ExternalReference cannot be empty", "INVALID_EXTERNAL_REFERENCE");
 
-        public Payment(PaymentProvider provider, PaymentPurpose purpose,
-                       decimal amount, string externalUserId, string appName,
-                       string externalReference, string redirectUrl, string notificationUrl)
+        Id = Guid.NewGuid();
+        Reference = PaymentReference.Generate();
+        Provider = provider;
+        Purpose = purpose;
+        Amount = amount;
+        ExternalUserId = externalUserId;
+        AppName = appName.Trim();
+        ExternalReference = externalReference.Trim();
+        RedirectUrl = redirectUrl;
+        NotificationUrl = notificationUrl;
+        Status = PaymentStatus.Pending;
+        CreatedAt = DateTime.UtcNow;
+    }
+
+    public void ProcessSuccessfulPayment(Money receivedAmount)
+    {
+        if (Status != PaymentStatus.Pending)
+            throw new PaymentStateException(
+                $"Payment already processed with status: {Status}",
+                "ALREADY_PROCESSED");
+
+        if (!receivedAmount.Equals(Amount))
         {
-            Id = Guid.NewGuid();
-            Reference = $"PB_{Guid.NewGuid():N}";
-            Provider = provider;
-            Purpose = purpose;
-            Amount = amount;
-            Currency = "NGN";
-            ExternalUserId = externalUserId;
-            AppName = appName;
-            ExternalReference = externalReference;
-            RedirectUrl = redirectUrl;
-            NotificationUrl = notificationUrl;
-            Status = PaymentStatus.Pending;
-            CreatedAt = DateTime.UtcNow;
-        }
-
-        public PaymentProcessingResult ProcessSuccessfulPayment(decimal receivedAmount)
-        {
-            if (Status != PaymentStatus.Pending)
-                return PaymentProcessingResult.AlreadyProcessed;
-
-            if (receivedAmount != Amount)
-            {
-                MarkFailed();
-                return PaymentProcessingResult.AmountMismatch;
-            }
-
-            MarkSuccessful();
-            return PaymentProcessingResult.Success;
-        }
-
-        public void MarkInitializationFailed()
-        {
-            if (Status != PaymentStatus.Pending)
-                return;
-
             MarkFailed();
+            throw new PaymentAmountMismatchException(
+                $"Expected {Amount}, received {receivedAmount}");
         }
 
+        MarkSuccessful();
+    }
 
-        private void MarkSuccessful()
-        {
-            Status = PaymentStatus.Success;
-            VerifiedAt = DateTime.UtcNow;
-        }
+    /// <summary>
+    /// Marks payment initialization as failed
+    /// Can only be called on pending payments
+    /// </summary>
+    public void MarkInitializationFailed()
+    {
+        if (Status != PaymentStatus.Pending)
+            throw new PaymentStateException(
+                $"Cannot mark as initialization failed. Current status: {Status}",
+                "INVALID_STATE_TRANSITION");
 
-        private void MarkFailed()
-        {
-            Status = PaymentStatus.Failed;
-            VerifiedAt = DateTime.UtcNow;
-        }
+        MarkFailed();
+    }
+
+
+    private void MarkSuccessful()
+    {
+        Status = PaymentStatus.Success;
+        VerifiedAt = DateTime.UtcNow;
+    }
+
+    private void MarkFailed()
+    {
+        Status = PaymentStatus.Failed;
+        VerifiedAt = DateTime.UtcNow;
     }
 }
+

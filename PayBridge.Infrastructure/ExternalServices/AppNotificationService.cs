@@ -26,10 +26,10 @@ namespace PayBridge.Infrastructure.ExternalServices
         {
             var payload = new
             {
-                paymentReference = payment.Reference,
+                paymentReference = payment.Reference.Value,
                 externalReference = payment.ExternalReference, // e.g orderId
                 status = payment.Status.ToString(),
-                amount = payment.Amount
+                amount = payment.Amount.Amount
             };
 
             // We use the RedirectUrl or a specific WebhookUrl stored in the DB
@@ -41,7 +41,7 @@ namespace PayBridge.Infrastructure.ExternalServices
                 );
             try
             {
-                var response = await httpClient.PostAsJsonAsync(payment.NotificationUrl, payload);
+                var response = await httpClient.PostAsJsonAsync(payment.NotificationUrl.Value, payload);
 
                 if (response.IsSuccessStatusCode)
                 {

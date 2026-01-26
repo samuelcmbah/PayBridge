@@ -16,60 +16,33 @@ using System.Text.Json;
 
 namespace PayBridge.Infrastructure.PayStack
 {
-    public class PaystackGateway : IPaymentGateway
+    public class PaystackGateway(
+        PaystackHttpClient httpClient,
+        IOptions<PaystackSettings> options,
+        ILogger<PaystackGateway> logger) : IPaymentGateway
     {
-        private readonly string _secretKey;
-        private readonly HttpClient _httpClient;
-        private readonly ILogger<PaystackGateway> _logger;
+        private readonly PaystackHttpClient _httpClient = httpClient;
+        private readonly string _secretKey = options.Value.SecretKey;
+        private readonly ILogger<PaystackGateway> _logger = logger;
 
-        // Paystack API constants
         private const int KoboMultiplier = 100;
-        private const string InitializeEndpoint = "transaction/initialize";
 
-        public PaystackGateway(
-            IOptions<PaystackSettings> options,
-            IHttpClientFactory httpClientFactory,
-            ILogger<PaystackGateway> logger)
-        {
-            _secretKey = options.Value.SecretKey;
-            _logger = logger;
-            _httpClient = httpClientFactory.CreateClient();
-
-            // Setup HttpClient headers for Paystack
-            _httpClient.BaseAddress = new Uri("https://api.paystack.co/");
-            _httpClient.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", _secretKey);
-            _httpClient.DefaultRequestHeaders.Accept.Add(
-                new MediaTypeWithQualityHeaderValue("application/json"));
-        }
 
         public PaymentProvider Provider => PaymentProvider.Paystack;
 
         public async Task<Result<PaymentInitResult>> InitializeAsync(Payment payment)
         {
            
-            var amountInKobo = ConvertToKobo(payment.Amount);
+            var amountInKobo = ConvertToKobo(payment.Amount.Amount);
 
-            var paystackPayload = new
-            {
-                email = payment.ExternalUserId,
-                amount = amountInKobo,
-                reference = payment.Reference,
-                callback_url = payment.RedirectUrl,
-                metadata = new
-                {
-                    internal_id = payment.Id,
-                    app_name = payment.AppName,
-                    purpose = payment.Purpose.ToString()
-                }
-            };
+            var paystackPayload = BuildInitializePayload(payment);
 
             HttpResponseMessage response;
 
             //Call Paystack API
             try
             {
-                response = await _httpClient.PostAsJsonAsync(InitializeEndpoint, paystackPayload);
+                response = await _httpClient.InitializeTransactionAsync(paystackPayload);
             }
             catch (HttpRequestException ex)
             {
@@ -143,7 +116,7 @@ namespace PayBridge.Infrastructure.PayStack
                     payment.Reference, authUrl
                 );
 
-                var result = new PaymentInitResult(payment.Reference, authUrl);
+                var result = new PaymentInitResult(payment.Reference.Value, authUrl);
                 return Result<PaymentInitResult>.Success(result);
             }
             catch (JsonException ex)
@@ -268,8 +241,24 @@ namespace PayBridge.Infrastructure.PayStack
             }
         }
 
-        // Helper Methods
+        #region Private Helper Methods
 
+        private object BuildInitializePayload(Payment payment)
+        {
+            return new
+            {
+                email = payment.ExternalUserId.Value,
+                amount = ConvertToKobo(payment.Amount.Amount),
+                reference = payment.Reference.Value,
+                callback_url = payment.RedirectUrl.Value,
+                metadata = new
+                {
+                    internal_id = payment.Id,
+                    app_name = payment.AppName,
+                    purpose = payment.Purpose.ToString()
+                }
+            };
+        }
         private static int ConvertToKobo(decimal amountInNaira)
         {
             return (int)(amountInNaira * KoboMultiplier);
@@ -318,5 +307,6 @@ namespace PayBridge.Infrastructure.PayStack
                 )
             };
         }
+        #endregion
     }
 }
