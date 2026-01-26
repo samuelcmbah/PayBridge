@@ -6,6 +6,7 @@ using PayBridge.Application.DTOs;
 using PayBridge.Application.IServices;
 using PayBridge.Domain.Entities;
 using PayBridge.Domain.Enums;
+using PayBridge.Infrastructure.PayStack.DTOs;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -32,17 +33,36 @@ namespace PayBridge.Infrastructure.PayStack
 
         public async Task<Result<PaymentInitResult>> InitializeAsync(Payment payment)
         {
-           
-            var amountInKobo = ConvertToKobo(payment.Amount.Amount);
 
-            var paystackPayload = BuildInitializePayload(payment);
-
-            HttpResponseMessage response;
-
-            //Call Paystack API
             try
             {
-                response = await _httpClient.InitializeTransactionAsync(paystackPayload);
+                var paystackPayload = BuildInitializePayload(payment);
+                var response = await _httpClient.InitializeTransactionAsync(paystackPayload);
+
+                // Handle non-success status codes
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorBody = await response.Content.ReadAsStringAsync();
+
+                    return HandlePaystackError(response.StatusCode, errorBody);
+                }
+
+                var responseDto = await response.Content.ReadFromJsonAsync<PaystackInitResponse>();
+
+                if(responseDto?.Data?.AuthorizationUrl == null)
+                {
+                    return Result<PaymentInitResult>.Failure("Provider missinig auth URL", "MISSING_AUTH_URL");
+                }
+
+                var authUrl = responseDto.Data.AuthorizationUrl;
+                _logger.LogInformation(
+                    "Successfully initialized Paystack transaction - Reference: {Reference}, AuthUrl: {AuthUrl}",
+                    payment.Reference.Value, authUrl
+                );
+
+                var result = new PaymentInitResult(payment.Reference.Value, authUrl);
+                return Result<PaymentInitResult>.Success(result);
+
             }
             catch (HttpRequestException ex)
             {
@@ -62,7 +82,7 @@ namespace PayBridge.Infrastructure.PayStack
                 _logger.LogError(
                     ex,
                     "Timeout while calling Paystack API - Reference: {Reference}",
-                    payment.Reference
+                    payment.Reference.Value
                 );
 
                 return Result<PaymentInitResult>.Failure(
@@ -70,61 +90,12 @@ namespace PayBridge.Infrastructure.PayStack
                     "TIMEOUT_ERROR"
                 );
             }
-
-            // Handle non-success status codes
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorBody = await response.Content.ReadAsStringAsync();
-
-                return HandlePaystackError(response.StatusCode, errorBody);
-            }
-
-            // Parse successful response
-            try
-            {
-                var content = await response.Content.ReadFromJsonAsync<JsonElement>();
-
-                // Verify response structure
-                if (!content.TryGetProperty("data", out var data))
-                {
-                    return Result<PaymentInitResult>.Failure(
-                        "Invalid response from payment provider",
-                        "INVALID_RESPONSE"
-                    );
-                }
-
-                if (!data.TryGetProperty("authorization_url", out var authUrlElement))
-                {
-                    return Result<PaymentInitResult>.Failure(
-                        "Payment provider did not return authorization URL",
-                        "MISSING_AUTH_URL"
-                    );
-                }
-
-                var authUrl = authUrlElement.GetString();
-
-                if (string.IsNullOrWhiteSpace(authUrl))
-                {
-                    return Result<PaymentInitResult>.Failure(
-                        "Payment provider returned invalid authorization URL",
-                        "INVALID_AUTH_URL"
-                    );
-                }
-
-                _logger.LogInformation(
-                    "Successfully initialized Paystack transaction - Reference: {Reference}, AuthUrl: {AuthUrl}",
-                    payment.Reference, authUrl
-                );
-
-                var result = new PaymentInitResult(payment.Reference.Value, authUrl);
-                return Result<PaymentInitResult>.Success(result);
-            }
             catch (JsonException ex)
             {
                 _logger.LogError(
                     ex,
                     "Failed to parse Paystack response - Reference: {Reference}",
-                    payment.Reference
+                    payment.Reference.Value
                 );
 
                 return Result<PaymentInitResult>.Failure(
@@ -132,6 +103,8 @@ namespace PayBridge.Infrastructure.PayStack
                     "PARSE_ERROR"
                 );
             }
+
+            
         }
 
         public Result<bool> VerifySignature(string jsonPayload, string signature)
@@ -162,47 +135,27 @@ namespace PayBridge.Infrastructure.PayStack
         {
             try
             {
-                var doc = JsonDocument.Parse(jsonPayload);
+                var payload = JsonSerializer.Deserialize<PaystackWebhookPayload>(
+                        jsonPayload,
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-                // Validate structure
-                if (!doc.RootElement.TryGetProperty("event", out var eventElement))
+                if(payload?.Data == null)
                 {
                     return Result<PaymentVerificationResult>.Failure(
-                        "Webhook missing 'event' property",
+                        "Invalid webhook data",
                         "INVALID_STRUCTURE"
                     );
                 }
 
-                var eventType = eventElement.GetString();
-
-                // We only care about successful charges
-                if (eventType != "charge.success")
+                if(payload.Event != "charge.success")
                 {
                     return Result<PaymentVerificationResult>.Failure(
-                        $"Event type '{eventType}' is not processed",
+                        $"Event type '{payload.Event}' is not processed",
                         "UNSUPPORTED_EVENT"
                     );
                 }
 
-                if (!doc.RootElement.TryGetProperty("data", out var data))
-                {
-                    return Result<PaymentVerificationResult>.Failure(
-                        "Webhook missing 'data' property",
-                        "INVALID_STRUCTURE"
-                    );
-                }
-
-                // Extract reference
-                if (!data.TryGetProperty("reference", out var referenceElement))
-                {
-                    return Result<PaymentVerificationResult>.Failure(
-                        "Webhook missing payment reference",
-                        "MISSING_REFERENCE"
-                    );
-                }
-
-                var reference = referenceElement.GetString();
-                if (string.IsNullOrWhiteSpace(reference))
+                if (string.IsNullOrWhiteSpace(payload.Data.Reference))
                 {
                     return Result<PaymentVerificationResult>.Failure(
                         "Payment reference is empty",
@@ -210,35 +163,21 @@ namespace PayBridge.Infrastructure.PayStack
                     );
                 }
 
-                // Extract amount
-                if (!data.TryGetProperty("amount", out var amountElement))
-                {
-                    return Result<PaymentVerificationResult>.Failure(
-                        "Webhook missing payment amount",
-                        "MISSING_AMOUNT"
-                    );
-                }
+                var amountInNaira = payload.Data.Amount / 100m;
 
-                var amountInKobo = amountElement.GetInt32();
-                var amountInNaira = amountInKobo / 100m;
-
-                var result = new PaymentVerificationResult(reference, amountInNaira);
+                var result = new PaymentVerificationResult(payload.Data.Reference, amountInNaira);
                 return Result<PaymentVerificationResult>.Success(result);
+
             }
             catch (JsonException ex)
             {
+                _logger.LogError(ex, "Failed to deserialize Paystack webhook");
                 return Result<PaymentVerificationResult>.Failure(
-                    $"Failed to parse webhook JSON: {ex.Message}",
+                    "Invalid JSON format",
                     "JSON_PARSE_ERROR"
                 );
             }
-            catch (Exception ex)
-            {
-                return Result<PaymentVerificationResult>.Failure(
-                    $"Unexpected error parsing webhook: {ex.Message}",
-                    "PARSE_ERROR"
-                );
-            }
+            
         }
 
         #region Private Helper Methods
