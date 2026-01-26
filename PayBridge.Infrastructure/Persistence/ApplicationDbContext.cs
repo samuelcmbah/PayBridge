@@ -55,6 +55,15 @@ namespace PayBridge.Infrastructure.Persistence
                         .IsRequired();
                 });
 
+                entity.Property(e => e.ExternalUserId)
+                    .HasConversion(
+                        v => v.Value,
+                        v => Email.Create(v)
+                    )
+                    .HasColumnName("ExternalUserId")
+                    .HasMaxLength(254)
+                    .IsRequired();
+
                 entity.Property(e => e.RedirectUrl)
                    .HasConversion(
                        v => v.Value,
