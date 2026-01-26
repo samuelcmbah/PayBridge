@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using PayBridge.API.ExceptionHandlers;
 using PayBridge.Application.IServices;
 using PayBridge.Application.Services;
 using PayBridge.Infrastructure.ExternalServices;
@@ -19,6 +20,8 @@ builder.Host.UseSerilog((_, logger) =>
         .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
         .WriteTo.Console();
 });
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails(); // Enables ProblemDetails RFC 7807
 
 builder.Services.Configure<PaystackSettings>(builder.Configuration.GetSection("Paystack"));
 //builder.Services.Configure<FlutterwaveSettings>(
@@ -62,6 +65,8 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+
+app.UseExceptionHandler();
 
 app.UseHttpsRedirection();
 
