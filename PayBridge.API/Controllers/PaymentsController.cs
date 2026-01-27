@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Http;
+﻿using FluentValidation;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using PayBridge.Application.DTOs;
 using PayBridge.Application.IServices;
@@ -11,15 +12,32 @@ namespace PayBridge.API.Controllers
     public class PaymentsController : ControllerBase
     {
         private readonly IPaymentService paymentService;
+        private readonly IValidator<PaymentRequest> validator;
 
-        public PaymentsController(IPaymentService paymentService)
+        public PaymentsController(IPaymentService paymentService, IValidator<PaymentRequest> validator)
         {
             this.paymentService = paymentService;
+            this.validator = validator;
         }
 
         [HttpPost("initialize")]
         public async Task<IActionResult> Initialize([FromBody] PaymentRequest request)
         {
+            var validationResult = await validator.ValidateAsync(request);
+
+            if (!validationResult.IsValid)
+            {
+                return BadRequest(new
+                {
+                    errors = validationResult.Errors.Select(e => new
+                    {
+                        property = e.PropertyName,
+                        message = e.ErrorMessage,
+                        errorCode = e.ErrorCode
+                    })
+                });
+            }
+
             var result = await paymentService.InitializePaymentAsync(request);
             if (!result.IsSuccess)
             {

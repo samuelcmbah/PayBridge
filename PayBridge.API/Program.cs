@@ -1,8 +1,10 @@
+using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using PayBridge.API.ExceptionHandlers;
 using PayBridge.Application.IServices;
 using PayBridge.Application.Services;
+using PayBridge.Application.Validators;
 using PayBridge.Infrastructure.ExternalServices;
 using PayBridge.Infrastructure.PayStack;
 using PayBridge.Infrastructure.Persistence;
@@ -22,6 +24,9 @@ builder.Host.UseSerilog((_, logger) =>
 });
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails(); // Enables ProblemDetails RFC 7807
+
+// Register FluentValidation
+builder.Services.AddValidatorsFromAssemblyContaining<PaymentRequestValidator>();
 
 builder.Services.Configure<PaystackSettings>(builder.Configuration.GetSection("Paystack"));
 //builder.Services.Configure<FlutterwaveSettings>(
