@@ -32,7 +32,6 @@
   <ItemGroup>
     <Folder Include="Application\Services\" />
     <Folder Include="Domain\Entities\" />
-    <Folder Include="Domain\ValueObjects\" />
     <Folder Include="Infrastructure\Paystack\" />
   </ItemGroup>
 
