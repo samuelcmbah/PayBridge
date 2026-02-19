@@ -34,7 +34,7 @@ builder.Services.Configure<PaystackSettings>(builder.Configuration.GetSection("P
 
 // Add DbContext
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 // register httpclient config here, not in constructor
 builder.Services.AddHttpClient<PaystackHttpClient>((serviceProvider, client) =>

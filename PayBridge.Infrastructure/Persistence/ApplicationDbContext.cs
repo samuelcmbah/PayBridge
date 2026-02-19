@@ -25,10 +25,10 @@ namespace PayBridge.Infrastructure.Persistence
             {
                 entity.HasKey(e => e.Id);
 
-                entity.Property<byte[]>("RowVersion") //Race Condition & Optimistic Concurrency
-                   .IsRowVersion()           
-                   .HasColumnName("RowVersion")
-                   .IsRequired();
+                //entity.Property<byte[]>("RowVersion") //Race Condition & Optimistic Concurrency
+                //   .IsRowVersion()           
+                //   .HasColumnName("RowVersion")
+                //   .IsRequired();
 
                 entity.Property(e => e.Reference)
                     .HasConversion(
