@@ -146,8 +146,6 @@ namespace PayBridge.Application.Services
                 //made it here? then ok to notify app
                 await PublishPaymentSucceededEventAsync(payment);
 
-
-
                 return WebhookResult.Success();
 
             }
