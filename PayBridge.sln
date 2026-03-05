@@ -17,6 +17,11 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PayBridge.Messaging", "PayB
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PayBridge.NotificationWorker", "PayBridge.NotificationWorker\PayBridge.NotificationWorker.csproj", "{54E2135D-2A2F-451A-9569-532C476DECB1}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{4AEB43AC-794E-4E89-B70D-B0CEA0AEE315}"
+	ProjectSection(SolutionItems) = preProject
+		docker-compose.rabbitmq.yml = docker-compose.rabbitmq.yml
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU

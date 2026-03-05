@@ -1,0 +1,23 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: paybridge-rabbitmq
+    ports:
+      - "5672:5672"     # AMQP protocol port (your .NET apps connect here)
+      - "15672:15672"   # Management dashboard (http://localhost:15672)
+    environment:
+      RABBITMQ_DEFAULT_USER: paybridge
+      RABBITMQ_DEFAULT_PASS: paybridge123
+      RABBITMQ_DEFAULT_VHOST: paybridge
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq   # Persists messages across container restarts
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s   # Give RabbitMQ time to boot before health checks begin
+
+volumes:
+  rabbitmq_data:
+    driver: local
