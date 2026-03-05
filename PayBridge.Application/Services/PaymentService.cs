@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using MassTransit;
+using Microsoft.Extensions.Logging;
 using PayBridge.Application.Common;
 using PayBridge.Application.DTOs;
 using PayBridge.Application.IServices;
@@ -6,28 +7,26 @@ using PayBridge.Domain.Entities;
 using PayBridge.Domain.Enums;
 using PayBridge.Domain.Exceptions;
 using PayBridge.Domain.ValueObjects;
+using PayBridge.Messaging.Events;
 using System;
 
 namespace PayBridge.Application.Services
 {
-    public class PaymentService : IPaymentService
-    {
-        private readonly IPaymentRepository paymentRepository;
-        private readonly IAppNotificationService appNotificationService;
-        private readonly IEnumerable<IPaymentGateway> gateways;
-        private readonly ILogger<PaymentService> logger;
 
-        public PaymentService(
-            IPaymentRepository paymentRepository,
-            IAppNotificationService appNotificationService,
-            IEnumerable<IPaymentGateway> gateways,
-            ILogger<PaymentService> logger)
-        {
-            this.paymentRepository = paymentRepository;
-            this.appNotificationService = appNotificationService;
-            this.gateways = gateways;
-            this.logger = logger;
-        }
+    public class PaymentService(
+        IPaymentRepository paymentRepository,
+        IPublishEndpoint publishEndpoint,
+        IAppNotificationService appNotificationService,
+        IEnumerable<IPaymentGateway> gateways,
+        ILogger<PaymentService> logger) : IPaymentService
+    {
+        private readonly IPaymentRepository paymentRepository = paymentRepository;
+        private readonly IPublishEndpoint publishEndpoint = publishEndpoint;
+        private readonly IAppNotificationService appNotificationService = appNotificationService;
+        private readonly IEnumerable<IPaymentGateway> gateways = gateways;
+        private readonly ILogger<PaymentService> logger = logger;
+
+
 
         public async Task<Result<PaymentInitResult>> InitializePaymentAsync(PaymentRequest request)
         {
@@ -143,9 +142,10 @@ namespace PayBridge.Application.Services
                 {
                     return WebhookResult.Failed($"Failed to save payment status: {saveResult.Error}");
                 }
-                
+
                 //made it here? then ok to notify app
-                await TryNotifyAppAsync(payment);
+                await PublishPaymentSucceededEventAsync(payment);
+
 
 
                 return WebhookResult.Success();
@@ -292,6 +292,48 @@ namespace PayBridge.Application.Services
                     payment.Reference);
                 // Swallow exception - payment is already marked successful
                 // Notification failures should be handled via retry queue
+            }
+        }
+
+        /// <summary>
+        ///Publish event to RabbitMQ instead of directly calling AppNotificationService.
+        ///The NotificationWorker will pick this up and call SportStore's endpoint.
+        ///If SportStore is down, RabbitMQ holds the message and retries automatically.
+        /// </summary>
+        private async Task PublishPaymentSucceededEventAsync(Payment payment)
+        {
+            try
+            {
+                var paymentEvent = new PaymentSucceededEvent
+                {
+                    PaymentReference = payment.Reference.Value,
+                    ExternalReference = payment.ExternalReference,
+                    AppName = payment.AppName,
+                    Amount = payment.Amount.Amount,
+                    Currency = payment.Amount.Currency,
+                    NotificationUrl = payment.NotificationUrl.Value,
+                    OccurredAt = DateTime.UtcNow
+                };
+
+                await publishEndpoint.Publish(paymentEvent);
+
+                logger.LogInformation(
+                    "Published PaymentSucceededEvent for Reference: {Reference}, App: {AppName}",
+                    payment.Reference.Value,
+                    payment.AppName);
+            }
+            catch (Exception ex)
+            {
+                // We log but do not fail the webhook result here.
+                // The payment is already marked successful in the database.
+                // In a production system, this would trigger an alert to the ops team
+                // to investigate why the message broker is unreachable.
+                logger.LogCritical(
+                    ex,
+                    "CRITICAL: Failed to publish PaymentSucceededEvent for Reference: {Reference}. " +
+                    "Payment is marked successful in DB but notification may not be delivered. " +
+                    "Manual intervention may be required.",
+                    payment.Reference.Value);
             }
         }
 
