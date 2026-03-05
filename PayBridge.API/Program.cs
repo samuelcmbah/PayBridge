@@ -1,4 +1,5 @@
 using FluentValidation;
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using PayBridge.API.ExceptionHandlers;
@@ -6,6 +7,7 @@ using PayBridge.Application.IServices;
 using PayBridge.Application.Services;
 using PayBridge.Application.Validators;
 using PayBridge.Infrastructure.ExternalServices;
+using PayBridge.Infrastructure.Messaging;
 using PayBridge.Infrastructure.PayStack;
 using PayBridge.Infrastructure.Persistence;
 using Serilog;
@@ -32,6 +34,8 @@ builder.Services.Configure<PaystackSettings>(builder.Configuration.GetSection("P
 //builder.Services.Configure<FlutterwaveSettings>(
 //    builder.Configuration.GetSection("Flutterwave"));
 
+builder.Services.Configure<RabbitMqSettings>(builder.Configuration.GetSection("RabbitMq"));
+
 // Add DbContext
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
@@ -50,9 +54,32 @@ builder.Services.AddHttpClient<PaystackHttpClient>((serviceProvider, client) =>
         new MediaTypeWithQualityHeaderValue("application/json"));
     client.Timeout = TimeSpan.FromSeconds(30);
 });
+
+builder.Services.AddMassTransit(x =>
+{
+    x.UsingRabbitMq((context, cfg) =>
+    {
+        var rabbitMqSettings = context
+            .GetRequiredService<IOptions<RabbitMqSettings>>()
+            .Value;
+
+        cfg.Host(rabbitMqSettings.Host, (ushort)rabbitMqSettings.Port, rabbitMqSettings.VirtualHost, h =>
+        {
+            h.Username(rabbitMqSettings.Username);
+            h.Password(rabbitMqSettings.Password);
+        });
+
+        // No consumers registered here - this is publish-only
+        // Consumers live in PayBridge.NotificationWorker
+        // MassTransit will automatically create the exchange for PaymentSucceededEvent
+    });
+});
+
 builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
 builder.Services.AddScoped<IPaymentGateway, PaystackGateway>();
+// AppNotificationService is kept for now but will no longer be called directly
+// by PaymentService - the NotificationWorker takes over that responsibility
 builder.Services.AddScoped<IAppNotificationService, AppNotificationService>();
 
 
