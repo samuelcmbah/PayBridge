@@ -16,13 +16,11 @@ namespace PayBridge.Application.Services
     public class PaymentService(
         IPaymentRepository paymentRepository,
         IPublishEndpoint publishEndpoint,
-        IAppNotificationService appNotificationService,
         IEnumerable<IPaymentGateway> gateways,
         ILogger<PaymentService> logger) : IPaymentService
     {
         private readonly IPaymentRepository paymentRepository = paymentRepository;
         private readonly IPublishEndpoint publishEndpoint = publishEndpoint;
-        private readonly IAppNotificationService appNotificationService = appNotificationService;
         private readonly IEnumerable<IPaymentGateway> gateways = gateways;
         private readonly ILogger<PaymentService> logger = logger;
 
@@ -272,26 +270,7 @@ namespace PayBridge.Application.Services
             }
         }
 
-        /// <summary>
-        /// Attempts to notify the app about payment completion (fire-and-forget)
-        /// Best effort operation - failure is logged but not propagated
-        /// </summary>
-        private async Task TryNotifyAppAsync(Payment payment)
-        {
-            try
-            {
-                await appNotificationService.NotifyAppAsync(payment);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(
-                    ex,
-                    "Failed to notify app for payment {Reference}",
-                    payment.Reference);
-                // Swallow exception - payment is already marked successful
-                // Notification failures should be handled via retry queue
-            }
-        }
+       
 
         /// <summary>
         ///Publish event to RabbitMQ instead of directly calling AppNotificationService.
