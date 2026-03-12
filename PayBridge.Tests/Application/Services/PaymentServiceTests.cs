@@ -1,4 +1,5 @@
 ﻿using FluentAssertions;
+using MassTransit;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using PayBridge.Application.Common;
@@ -8,6 +9,7 @@ using PayBridge.Application.Services;
 using PayBridge.Domain.Entities;
 using PayBridge.Domain.Enums;
 using PayBridge.Domain.ValueObjects;
+using PayBridge.Messaging.Events;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -20,18 +22,16 @@ namespace PayBridge.Tests.Application.Services
     {
         #region Test Setup & Helpers
 
-        // These are the dependencies we'll mock
         private readonly IPaymentRepository _mockRepository;
-        private readonly IAppNotificationService _mockNotificationService;
+        private readonly IPublishEndpoint _mockPublishEndpoint;
         private readonly IPaymentGateway _mockPaystackGateway;
         private readonly ILogger<PaymentService> _mockLogger;
-        private readonly PaymentService _sut; // SUT = System Under Test
+        private readonly PaymentService _sut; 
 
         public PaymentServiceTests()
         {
-            // Create mocks for all dependencies
             _mockRepository = Substitute.For<IPaymentRepository>();
-            _mockNotificationService = Substitute.For<IAppNotificationService>();
+            _mockPublishEndpoint = Substitute.For<IPublishEndpoint>();
             _mockPaystackGateway = Substitute.For<IPaymentGateway>();
             _mockLogger = Substitute.For<ILogger<PaymentService>>();
 
@@ -42,7 +42,7 @@ namespace PayBridge.Tests.Application.Services
             var gateways = new List<IPaymentGateway> { _mockPaystackGateway };
             _sut = new PaymentService(
                 _mockRepository,
-                _mockNotificationService,
+                _mockPublishEndpoint,
                 gateways,
                 _mockLogger
             );
@@ -225,7 +225,7 @@ namespace PayBridge.Tests.Application.Services
         #region HandleWebhookAsync Tests 
 
         [Fact]
-        public async Task HandleWebhookAsync_WithValidSignatureAndData_ShouldProcessSuccessfully()
+        public async Task HandleWebhookAsync_WithValidSignatureAndData_ShouldPublishEventAndSucceed()
         {
             // Arrange
             var provider = "paystack";
@@ -264,9 +264,6 @@ namespace PayBridge.Tests.Application.Services
                 .SaveChangesAsync()
                 .Returns(Task.CompletedTask);
 
-            _mockNotificationService
-                .NotifyAppAsync(payment)
-                .Returns(Task.CompletedTask);
 
             // Act
             var result = await _sut.HandleWebhookAsync(provider, jsonPayload, signature);
@@ -276,11 +273,19 @@ namespace PayBridge.Tests.Application.Services
             result.ResultType.Should().Be(WebhookResultType.Processed);
 
             // Verify notification was sent
-            await _mockNotificationService.Received(1).NotifyAppAsync(payment);
+            // Verify that an event was published to RabbitMQ instead of a direct HTTP call
+            await _mockPublishEndpoint
+                .Received(1)
+                .Publish(
+                    Arg.Is<PaymentSucceededEvent>(e =>
+                        e.AppName == payment.AppName &&
+                        e.ExternalReference == payment.ExternalReference &&
+                        e.Amount == payment.Amount.Amount),
+                    Arg.Any<CancellationToken>());
         }
 
         [Fact]
-        public async Task HandleWebhookAsync_WithInvalidSignature_ShouldFail()
+        public async Task HandleWebhookAsync_WithInvalidSignature_ShouldFailWithoutPublishing()
         {
             // Arrange
             var provider = "paystack";
@@ -300,11 +305,64 @@ namespace PayBridge.Tests.Application.Services
             result.ResultType.Should().Be(WebhookResultType.Failed);
             result.Error.Should().Contain("Signature verification failed");
 
+            // Verify nothing was published to RabbitMQ
+            await _mockPublishEndpoint
+                .DidNotReceive()
+                .Publish(Arg.Any<PaymentSucceededEvent>(), Arg.Any<CancellationToken>());
+
             // Verify no payment processing occurred
             await _mockRepository.DidNotReceive().GetByReferenceAsync(Arg.Any<PaymentReference>());
-            await _mockNotificationService.DidNotReceive().NotifyAppAsync(Arg.Any<Payment>());
         }
 
+        [Fact]
+        public async Task HandleWebhookAsync_WhenPublishFails_ShouldStillReturnSuccess()
+        {
+            // Arrange - payment processing succeeds but RabbitMQ publish fails
+            // This tests that we return success (payment IS saved) but log critical
+            var provider = "paystack";
+            var jsonPayload = "{\"event\":\"charge.success\"}";
+            var signature = "valid_signature";
+
+            var payment = new Payment(
+                PaymentProvider.Paystack,
+                PaymentPurpose.ProductCheckout,
+                Money.Create(1000m, "NGN"),
+                Email.Create("user@example.com"),
+                "TestApp",
+                "ORDER-123",
+                Url.Create("https://example.com/callback"),
+                Url.Create("https://example.com/webhook")
+            );
+
+            _mockRepository
+                .GetByReferenceAsync(Arg.Any<PaymentReference>())
+                .Returns(payment);
+
+            _mockPaystackGateway
+                .VerifySignature(jsonPayload, signature)
+                .Returns(Result<bool>.Success(true));
+
+            _mockPaystackGateway
+                .ParseWebhook(jsonPayload)
+                .Returns(Result<PaymentVerificationResult>.Success(
+                    new PaymentVerificationResult(
+                        PaymentReference.Generate().Value, 1000m)));
+
+            _mockRepository.SaveChangesAsync().Returns(Task.CompletedTask);
+
+            // Mock RabbitMQ publish to throw
+            _mockPublishEndpoint
+                .When(x => x.Publish(Arg.Any<PaymentSucceededEvent>(), Arg.Any<CancellationToken>()))
+                .Do(_ => throw new Exception("RabbitMQ connection lost"));
+
+            // Act
+            var result = await _sut.HandleWebhookAsync(provider, jsonPayload, signature);
+
+            // Assert - webhook still returns success because payment WAS saved
+            // The critical log is the alert mechanism, not a failure response
+            result.IsSuccess.Should().BeTrue();
+            result.ResultType.Should().Be(WebhookResultType.Processed);
+        }
         #endregion
 
         #region NSubstitute quick guide (in comments)
