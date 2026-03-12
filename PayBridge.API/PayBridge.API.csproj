@@ -9,6 +9,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="MassTransit" Version="9.0.1" />
+    <PackageReference Include="MassTransit.RabbitMQ" Version="9.0.1" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.23">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -23,6 +25,7 @@
   <ItemGroup>
     <ProjectReference Include="..\PayBridge.Application\PayBridge.Application.csproj" />
     <ProjectReference Include="..\PayBridge.Infrastructure\PayBridge.Infrastructure.csproj" />
+    <ProjectReference Include="..\PayBridge.Messaging\PayBridge.Messaging.csproj" />
   </ItemGroup>
 
 </Project>
